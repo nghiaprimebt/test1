@@ -1,0 +1,637 @@
+-- Enhanced Anti-Lag System for Roblox
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+
+-- Configuration with customizable hotkeys
+local CONFIG = {
+    batchSize = 100,
+    yieldFrequency = 20,
+    ignorePlayers = true,
+    preserveTools = true,
+    
+    -- Hotkey settings
+    hotkey = Enum.KeyCode.L,
+    modifier = Enum.KeyCode.LeftControl,
+    settingsHotkey = Enum.KeyCode.K, -- Ctrl+K for settings
+}
+
+-- System state
+local AntiLag = {
+    isActive = false,
+    isProcessing = false,
+    processedCount = 0,
+    optimizedCount = 0,
+    gui = nil,
+    button = nil,
+    settingsFrame = nil,
+    currentFPS = 60,
+    lastUpdateTime = tick()
+}
+
+-- Track ignored objects and performance
+local ignoredObjects = {}
+local performanceStats = {
+    startTime = 0,
+    objectsPerSecond = 0
+}
+
+-- Utility: Create UI element with default properties
+local function createElement(className, parent, properties)
+    local element = Instance.new(className)
+    element.Parent = parent
+    
+    if properties then
+        for prop, value in pairs(properties) do
+            element[prop] = value
+        end
+    end
+    
+    return element
+end
+
+-- Utility: Create smooth tween
+local function createTween(object, duration, properties, style)
+    local tween = TweenService:Create(
+        object,
+        TweenInfo.new(duration, style or Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+        properties
+    )
+    tween:Play()
+    return tween
+end
+
+-- Utility: Safe property setting with better error handling
+local function safeSet(object, property, value)
+    if not object or not object.Parent then return false end
+    
+    local success, err = pcall(function()
+        object[property] = value
+    end)
+    
+    if not success then
+        warn(string.format("Failed to set %s.%s: %s", object.Name, property, tostring(err)))
+    end
+    
+    return success
+end
+
+-- Utility: Format numbers with commas
+local function formatNumber(num)
+    return tostring(num):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+end
+
+-- Enhanced object filtering logic
+local function shouldIgnore(object)
+    if ignoredObjects[object] then return true end
+    
+    -- Always preserve player characters and their descendants
+    if CONFIG.ignorePlayers then
+        for _, p in pairs(Players:GetPlayers()) do
+            if p.Character and object:IsDescendantOf(p.Character) then
+                return true
+            end
+        end
+    end
+    
+    -- Preserve essential game objects
+    local preserveClasses = {
+        "Camera", "Lighting", "Terrain", "StarterGui", "StarterPack",
+        "SoundService", "ReplicatedStorage", "ServerStorage", "Workspace"
+    }
+    
+    for _, className in pairs(preserveClasses) do
+        if object:IsA(className) or object.Name == className then
+            return true
+        end
+    end
+    
+    -- Preserve tools and their contents
+    if CONFIG.preserveTools and (object:IsA("Tool") or object:FindFirstAncestorOfClass("Tool")) then
+        return true
+    end
+    
+    -- Preserve GUI objects
+    if object:IsA("GuiBase") or object:FindFirstAncestorOfClass("ScreenGui") then
+        return true
+    end
+    
+    return false
+end
+
+-- Enhanced optimization with more comprehensive effects removal
+local function optimizeObject(object)
+    if not object or not object.Parent or shouldIgnore(object) then
+        return false
+    end
+    
+    local optimized = false
+    
+    -- Remove visual effects (higher priority)
+    local effectClasses = {
+        "ParticleEmitter", "Smoke", "Fire", "Explosion", "Beam", "Trail",
+        "PointLight", "SpotLight", "SurfaceLight", "Attachment"
+    }
+    
+    for _, effectClass in pairs(effectClasses) do
+        if object:IsA(effectClass) then
+            object:Destroy()
+            return true
+        end
+    end
+    
+    -- Remove audio
+    if object:IsA("Sound") then
+        safeSet(object, "Volume", 0)
+        object:Destroy()
+        return true
+    end
+    
+    -- Optimize BaseParts with more aggressive settings
+    if object:IsA("BasePart") then
+        local changes = {
+            {prop = "Transparency", value = 0.98},
+            {prop = "CanCollide", value = false},
+            {prop = "Material", value = Enum.Material.SmoothPlastic},
+            {prop = "CastShadow", value = false},
+            {prop = "TopSurface", value = Enum.SurfaceType.Smooth},
+            {prop = "BottomSurface", value = Enum.SurfaceType.Smooth}
+        }
+        
+        for _, change in pairs(changes) do
+            if safeSet(object, change.prop, change.value) then
+                optimized = true
+            end
+        end
+        
+        -- Optimize MeshParts specifically
+        if object:IsA("MeshPart") then
+            safeSet(object, "RenderFidelity", Enum.RenderFidelity.Performance)
+            optimized = true
+        end
+    end
+    
+    -- Remove or simplify visual elements
+    local removeClasses = {"Texture", "Decal", "SurfaceGui"}
+    for _, removeClass in pairs(removeClasses) do
+        if object:IsA(removeClass) then
+            object:Destroy()
+            return true
+        end
+    end
+    
+    -- Simplify meshes
+    if object:IsA("SpecialMesh") then
+        if safeSet(object, "TextureId", "") then optimized = true end
+        if safeSet(object, "Scale", Vector3.new(1, 1, 1)) then optimized = true end
+    end
+    
+    return optimized
+end
+
+-- Enhanced batch processing with real-time stats
+local function processWorkspace()
+    if AntiLag.isProcessing then return end
+    
+    AntiLag.isProcessing = true
+    AntiLag.processedCount = 0
+    AntiLag.optimizedCount = 0
+    performanceStats.startTime = tick()
+    
+    local allObjects = workspace:GetDescendants()
+    local totalObjects = #allObjects
+    
+    print(string.format("Starting optimization of %s objects...", formatNumber(totalObjects)))
+    
+    for i, object in ipairs(allObjects) do
+        -- Early exit if cancelled
+        if not AntiLag.isProcessing then
+            print("Optimization cancelled by user")
+            break
+        end
+        
+        -- Try to optimize
+        if optimizeObject(object) then
+            AntiLag.optimizedCount = AntiLag.optimizedCount + 1
+        end
+        
+        AntiLag.processedCount = i
+        
+        -- Yield periodically and update stats
+        if i % CONFIG.yieldFrequency == 0 then
+            RunService.Heartbeat:Wait()
+            
+            -- Calculate performance stats
+            local elapsed = tick() - performanceStats.startTime
+            performanceStats.objectsPerSecond = elapsed > 0 and i / elapsed or 0
+            
+            -- Update FPS tracking
+            local currentTime = tick()
+            local deltaTime = currentTime - AntiLag.lastUpdateTime
+            if deltaTime > 0 then
+                AntiLag.currentFPS = math.floor(1 / deltaTime)
+            end
+            AntiLag.lastUpdateTime = currentTime
+            
+            -- Progress update every 500 objects
+            if i % (CONFIG.yieldFrequency * 25) == 0 then
+                local progress = math.floor((i / totalObjects) * 100)
+                local eta = performanceStats.objectsPerSecond > 0 and (totalObjects - i) / performanceStats.objectsPerSecond or 0
+                
+                print(string.format("Progress: %d%% (%s/%s) - Optimized: %s - Speed: %.0f obj/s - ETA: %.1fs", 
+                    progress, formatNumber(i), formatNumber(totalObjects), 
+                    formatNumber(AntiLag.optimizedCount), performanceStats.objectsPerSecond, eta))
+            end
+        end
+    end
+    
+    AntiLag.isProcessing = false
+    
+    if AntiLag.processedCount > 0 then
+        AntiLag.isActive = true
+        local elapsed = tick() - performanceStats.startTime
+        print(string.format("Optimization complete! Processed %s objects in %.2fs", 
+            formatNumber(AntiLag.processedCount), elapsed))
+        print(string.format("Optimized %s objects (%.1f%% of total)", 
+            formatNumber(AntiLag.optimizedCount), (AntiLag.optimizedCount / AntiLag.processedCount) * 100))
+        
+        -- Force garbage collection
+        collectgarbage("collect")
+    end
+end
+
+-- Enhanced settings panel
+local function createSettingsPanel(parent)
+    local settingsFrame = createElement("Frame", parent, {
+        Name = "SettingsFrame",
+        Size = UDim2.fromOffset(300, 200),
+        Position = UDim2.new(0.5, -150, 0.5, -100),
+        BackgroundColor3 = Color3.fromRGB(25, 25, 30),
+        BorderSizePixel = 0,
+        Visible = false,
+        ZIndex = 10
+    })
+    
+    createElement("UICorner", settingsFrame, {CornerRadius = UDim.new(0, 12)})
+    createElement("UIStroke", settingsFrame, {
+        Color = Color3.fromRGB(70, 70, 80),
+        Thickness = 1
+    })
+    
+    -- Title
+    createElement("TextLabel", settingsFrame, {
+        Size = UDim2.new(1, 0, 0, 30),
+        BackgroundTransparency = 1,
+        Text = "Anti-Lag Settings",
+        TextColor3 = Color3.fromRGB(255, 255, 255),
+        TextScaled = true,
+        Font = Enum.Font.GothamBold,
+        ZIndex = 11
+    })
+    
+    -- Hotkey selection
+    local hotkeyLabel = createElement("TextLabel", settingsFrame, {
+        Position = UDim2.fromOffset(10, 40),
+        Size = UDim2.fromOffset(100, 25),
+        BackgroundTransparency = 1,
+        Text = "Toggle Hotkey:",
+        TextColor3 = Color3.fromRGB(200, 200, 200),
+        TextScaled = true,
+        Font = Enum.Font.Gotham,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 11
+    })
+    
+    local hotkeyButton = createElement("TextButton", settingsFrame, {
+        Position = UDim2.fromOffset(120, 40),
+        Size = UDim2.fromOffset(80, 25),
+        BackgroundColor3 = Color3.fromRGB(40, 40, 45),
+        Text = "Ctrl + " .. CONFIG.hotkey.Name:sub(-1),
+        TextColor3 = Color3.fromRGB(255, 255, 255),
+        TextScaled = true,
+        Font = Enum.Font.Gotham,
+        ZIndex = 11
+    })
+    
+    createElement("UICorner", hotkeyButton, {CornerRadius = UDim.new(0, 4)})
+    
+    -- Hotkey change functionality
+    local changingHotkey = false
+    hotkeyButton.MouseButton1Click:Connect(function()
+        if changingHotkey then return end
+        changingHotkey = true
+        hotkeyButton.Text = "Press key..."
+        hotkeyButton.BackgroundColor3 = Color3.fromRGB(60, 40, 40)
+        
+        local connection
+        connection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+            if gameProcessed then return end
+            
+            if input.UserInputType == Enum.UserInputType.Keyboard then
+                CONFIG.hotkey = input.KeyCode
+                hotkeyButton.Text = "Ctrl + " .. input.KeyCode.Name:sub(-1)
+                hotkeyButton.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+                changingHotkey = false
+                connection:Disconnect()
+                print("Hotkey changed to: Ctrl + " .. input.KeyCode.Name)
+            end
+        end)
+    end)
+    
+    -- Performance options
+    local preservePlayersToggle = createElement("TextButton", settingsFrame, {
+        Position = UDim2.fromOffset(10, 75),
+        Size = UDim2.fromOffset(20, 20),
+        BackgroundColor3 = CONFIG.ignorePlayers and Color3.fromRGB(50, 150, 50) or Color3.fromRGB(150, 50, 50),
+        Text = CONFIG.ignorePlayers and "✓" or "✗",
+        TextColor3 = Color3.fromRGB(255, 255, 255),
+        TextScaled = true,
+        Font = Enum.Font.GothamBold,
+        ZIndex = 11
+    })
+    
+    createElement("UICorner", preservePlayersToggle, {CornerRadius = UDim.new(0, 4)})
+    
+    createElement("TextLabel", settingsFrame, {
+        Position = UDim2.fromOffset(40, 75),
+        Size = UDim2.fromOffset(200, 20),
+        BackgroundTransparency = 1,
+        Text = "Preserve Player Characters",
+        TextColor3 = Color3.fromRGB(200, 200, 200),
+        TextScaled = true,
+        Font = Enum.Font.Gotham,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 11
+    })
+    
+    preservePlayersToggle.MouseButton1Click:Connect(function()
+        CONFIG.ignorePlayers = not CONFIG.ignorePlayers
+        preservePlayersToggle.BackgroundColor3 = CONFIG.ignorePlayers and Color3.fromRGB(50, 150, 50) or Color3.fromRGB(150, 50, 50)
+        preservePlayersToggle.Text = CONFIG.ignorePlayers and "✓" or "✗"
+    end)
+    
+    -- Close button
+    local closeButton = createElement("TextButton", settingsFrame, {
+        Position = UDim2.new(1, -30, 0, 5),
+        Size = UDim2.fromOffset(25, 25),
+        BackgroundColor3 = Color3.fromRGB(150, 50, 50),
+        Text = "×",
+        TextColor3 = Color3.fromRGB(255, 255, 255),
+        TextScaled = true,
+        Font = Enum.Font.GothamBold,
+        ZIndex = 11
+    })
+    
+    createElement("UICorner", closeButton, {CornerRadius = UDim.new(0, 4)})
+    
+    closeButton.MouseButton1Click:Connect(function()
+        createTween(settingsFrame, 0.3, {Size = UDim2.fromOffset(0, 0)})
+        wait(0.3)
+        settingsFrame.Visible = false
+        settingsFrame.Size = UDim2.fromOffset(300, 200)
+    end)
+    
+    AntiLag.settingsFrame = settingsFrame
+    return settingsFrame
+end
+
+-- Enhanced UI with better styling and stats display
+local function createMainUI(parent)
+    -- Main container
+    local container = createElement("Frame", parent, {
+        Name = "AntiLagContainer",
+        Size = UDim2.fromOffset(280, 100),
+        Position = UDim2.fromOffset(20, 20),
+        BackgroundColor3 = Color3.fromRGB(20, 25, 30),
+        BorderSizePixel = 0
+    })
+    
+    createElement("UICorner", container, {CornerRadius = UDim.new(0, 12)})
+    createElement("UIStroke", container, {
+        Color = Color3.fromRGB(60, 120, 200),
+        Thickness = 1,
+        Transparency = 0.5
+    })
+    
+    -- Header
+    local header = createElement("Frame", container, {
+        Size = UDim2.new(1, 0, 0, 30),
+        BackgroundColor3 = Color3.fromRGB(30, 35, 40),
+        BorderSizePixel = 0
+    })
+    
+    createElement("UICorner", header, {CornerRadius = UDim.new(0, 12)})
+    
+    local title = createElement("TextLabel", header, {
+        Size = UDim2.new(1, -60, 1, 0),
+        Position = UDim2.fromOffset(10, 0),
+        BackgroundTransparency = 1,
+        Text = "Anti-Lag System",
+        TextColor3 = Color3.fromRGB(255, 255, 255),
+        TextScaled = true,
+        Font = Enum.Font.GothamBold,
+        TextXAlignment = Enum.TextXAlignment.Left
+    })
+    
+    -- Settings button
+    local settingsButton = createElement("TextButton", header, {
+        Size = UDim2.fromOffset(25, 25),
+        Position = UDim2.new(1, -30, 0.5, -12.5),
+        BackgroundColor3 = Color3.fromRGB(50, 50, 60),
+        Text = "⚙",
+        TextColor3 = Color3.fromRGB(255, 255, 255),
+        TextScaled = true,
+        Font = Enum.Font.Gotham
+    })
+    
+    createElement("UICorner", settingsButton, {CornerRadius = UDim.new(0, 4)})
+    
+    settingsButton.MouseButton1Click:Connect(function()
+        if AntiLag.settingsFrame then
+            AntiLag.settingsFrame.Visible = true
+            createTween(AntiLag.settingsFrame, 0.3, {Size = UDim2.fromOffset(300, 200)})
+        end
+    end)
+    
+    -- Main button
+    local button = createElement("TextButton", container, {
+        Name = "MainButton",
+        Size = UDim2.new(0.4, 0, 0, 40),
+        Position = UDim2.fromOffset(10, 40),
+        BackgroundColor3 = Color3.fromRGB(40, 40, 40),
+        Text = "Start Optimization",
+        TextColor3 = Color3.fromRGB(255, 255, 255),
+        TextScaled = true,
+        Font = Enum.Font.GothamBold
+    })
+    
+    createElement("UICorner", button, {CornerRadius = UDim.new(0, 8)})
+    
+    -- Stats display
+    local statsFrame = createElement("Frame", container, {
+        Size = UDim2.new(0.55, -20, 0, 40),
+        Position = UDim2.new(0.45, 10, 0, 40),
+        BackgroundTransparency = 1
+    })
+    
+    local statsText = createElement("TextLabel", statsFrame, {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text = "Ready to optimize",
+        TextColor3 = Color3.fromRGB(180, 180, 180),
+        TextScaled = true,
+        Font = Enum.Font.Gotham,
+        TextXAlignment = Enum.TextXAlignment.Left
+    })
+    
+    -- Update button and stats
+    local function updateUI()
+        if AntiLag.isProcessing then
+            button.Text = "Cancel"
+            button.BackgroundColor3 = Color3.fromRGB(150, 50, 50)
+            statsText.Text = string.format("Processing: %s\nOptimized: %s", 
+                formatNumber(AntiLag.processedCount), formatNumber(AntiLag.optimizedCount))
+        elseif AntiLag.isActive then
+            button.Text = "Show Status"
+            button.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
+            statsText.Text = string.format("Active\nObjects: %s", formatNumber(AntiLag.processedCount))
+        else
+            button.Text = "Start Optimization"
+            button.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+            statsText.Text = "Ready to optimize"
+        end
+    end
+    
+    -- Button click handler
+    button.MouseButton1Click:Connect(function()
+        if AntiLag.isProcessing then
+            AntiLag.isProcessing = false
+            print("Optimization cancelled by user")
+        elseif AntiLag.isActive then
+            print(string.format("Anti-Lag Status:\n- Objects Processed: %s\n- Objects Optimized: %s\n- Current FPS: %d", 
+                formatNumber(AntiLag.processedCount), formatNumber(AntiLag.optimizedCount), AntiLag.currentFPS))
+        else
+            spawn(function()
+                processWorkspace()
+                updateUI()
+            end)
+        end
+        updateUI()
+    end)
+    
+    -- Update UI periodically
+    spawn(function()
+        while container.Parent do
+            updateUI()
+            wait(0.5)
+        end
+    end)
+    
+    -- Hover effects
+    button.MouseEnter:Connect(function()
+        createTween(button, 0.2, {Size = UDim2.new(0.42, 0, 0, 42)})
+    end)
+    
+    button.MouseLeave:Connect(function()
+        createTween(button, 0.2, {Size = UDim2.new(0.4, 0, 0, 40)})
+    end)
+    
+    AntiLag.button = button
+    return container
+end
+
+-- Enhanced keyboard handling with customizable hotkeys
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    
+    -- Main toggle hotkey (customizable)
+    if input.KeyCode == CONFIG.hotkey and UserInputService:IsKeyDown(CONFIG.modifier) then
+        if AntiLag.button then
+            if AntiLag.isProcessing then
+                AntiLag.isProcessing = false
+                print("Optimization cancelled via hotkey")
+            elseif AntiLag.isActive then
+                print(string.format("Anti-Lag Status (Hotkey):\n- Objects: %s\n- FPS: %d", 
+                    formatNumber(AntiLag.processedCount), AntiLag.currentFPS))
+            else
+                spawn(function()
+                    processWorkspace()
+                end)
+            end
+        end
+    end
+    
+    -- Settings hotkey
+    if input.KeyCode == CONFIG.settingsHotkey and UserInputService:IsKeyDown(CONFIG.modifier) then
+        if AntiLag.settingsFrame then
+            AntiLag.settingsFrame.Visible = not AntiLag.settingsFrame.Visible
+            if AntiLag.settingsFrame.Visible then
+                createTween(AntiLag.settingsFrame, 0.3, {Size = UDim2.fromOffset(300, 200)})
+            end
+        end
+    end
+end)
+
+-- Initialize system
+local function initialize()
+    local playerGui = player:WaitForChild("PlayerGui")
+    
+    AntiLag.gui = createElement("ScreenGui", playerGui, {
+        Name = "AntiLagGUI",
+        ResetOnSpawn = false,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    })
+    
+    createMainUI(AntiLag.gui)
+    createSettingsPanel(AntiLag.gui)
+    
+    print("Enhanced Anti-Lag System initialized!")
+    print(string.format("Hotkeys: Ctrl+%s (toggle), Ctrl+%s (settings)", 
+        CONFIG.hotkey.Name:sub(-1), CONFIG.settingsHotkey.Name:sub(-1)))
+end
+
+-- Enhanced player registration with better tracking
+local function registerPlayer(p)
+    local function markCharacterObjects(character)
+        for _, obj in pairs(character:GetDescendants()) do
+            ignoredObjects[obj] = true
+        end
+        
+        character.DescendantAdded:Connect(function(obj)
+            ignoredObjects[obj] = true
+        end)
+        
+        character.DescendantRemoving:Connect(function(obj)
+            ignoredObjects[obj] = nil
+        end)
+    end
+    
+    if p.Character then
+        markCharacterObjects(p.Character)
+    end
+    
+    p.CharacterAdded:Connect(markCharacterObjects)
+end
+
+-- Register all players
+for _, p in pairs(Players:GetPlayers()) do
+    registerPlayer(p)
+end
+Players.PlayerAdded:Connect(registerPlayer)
+
+-- Cleanup
+Players.PlayerRemoving:Connect(function(leavingPlayer)
+    if leavingPlayer == player and AntiLag.gui then
+        AntiLag.gui:Destroy()
+    end
+end)
+
+-- Initialize after delay
+wait(1)
+initialize()
+
+print("Enhanced Anti-Lag System loaded successfully!")
+print("Features: Customizable hotkeys, enhanced UI, better optimization logic")
