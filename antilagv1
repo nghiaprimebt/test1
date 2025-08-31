@@ -126,11 +126,22 @@ local notIgnore = {
 		Reflectance = 0,
 		CastShadow = false
 	},
+	["WedgePart"] = {
+		Material = Enum.Material.SmoothPlastic,
+		Reflectance = 0,
+		CastShadow = false
+	},
+	["CornerWedgePart"] = {
+		Material = Enum.Material.SmoothPlastic,
+		Reflectance = 0,
+		CastShadow = false
+	},
 	["UnionOperation"] = {
 		Material = Enum.Material.SmoothPlastic,
 		Reflectance = 0,
 		CastShadow = false
 	},
+	
 
 	-- Disable visual effects for performance
 	["Smoke"] = { Enabled = false },
