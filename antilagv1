@@ -227,8 +227,6 @@ local function progress(args, isINIT)
 	local endTime = tick()
 	if isINIT then
 		print(string.format("Total optimization completed: %d objects in %.2f seconds", totalProcessed, endTime - startTime))
-	else
-		print("Optimize a part")
 	end
 end
 
