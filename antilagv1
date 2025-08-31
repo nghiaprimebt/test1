@@ -10,7 +10,7 @@
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
-
+local hasINIT = false
 local TS = game:GetService("TweenService")
 
 -- Enhanced tween function with comprehensive error handling
@@ -248,6 +248,7 @@ local processes = {
 
 -- Main initialization function with GUI creation and process execution
 function init()
+	hasINIT = true
 	-- Validate LocalPlayer before proceeding
 	if not LocalPlayer or not LocalPlayer.Parent then
 		warn("LocalPlayer not available for GUI creation")
@@ -530,6 +531,9 @@ if LocalPlayer then
 		if LocalPlayer.Character and LocalPlayer.Character.Parent then
 			addCharacter(LocalPlayer.Character)
 			task.wait(2)
+				if hasINIT then 
+					return 
+				end
 			init() -- Start optimization immediately if character already exists
 		end
 	end)
@@ -539,6 +543,9 @@ if LocalPlayer then
 			local success, result = pcall(function()
 				addCharacter(char)
 				task.wait(2)
+				if hasINIT then 
+					return 
+				end
 				init() -- Start optimization process after LocalPlayer spawns
 			end)
 
