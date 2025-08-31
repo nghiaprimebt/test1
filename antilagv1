@@ -537,6 +537,7 @@ pcall(function()
 	end)
 end)
 
+task.wait(10)
 -- Initialize optimization when LocalPlayer spawns with enhanced error handling
 if LocalPlayer then
 	-- Handle if LocalPlayer already has a character when script runs
