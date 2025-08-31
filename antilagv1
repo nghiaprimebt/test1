@@ -168,7 +168,7 @@ local notIgnore = {
 }
 
 -- Main optimization function with enhanced error handling and progress tracking
-local function progress(args)
+local function progress(args, isINIT)
 	if not args or #args == 0 then
 		warn("Progress function called with no valid containers")
 		return
@@ -178,7 +178,6 @@ local function progress(args)
 	local startTime = tick()
 
 	for i, inst in ipairs(args) do
-		print(inst.Name)
 		if inst and inst.Parent and not skippable(inst) and notIgnore[inst.ClassName] then
 			local instanceSuccess = pcall(function()
 				for attr, val in pairs(notIgnore[inst.ClassName]) do
@@ -215,7 +214,11 @@ local function progress(args)
 	end
 
 	local endTime = tick()
-	print(string.format("Total optimization completed: %d objects in %.2f seconds", totalProcessed, endTime - startTime))
+	if isINIT then
+		print(string.format("Total optimization completed: %d objects in %.2f seconds", totalProcessed, endTime - startTime))
+	else
+		print("Optimize a part")
+	end
 end
 
 
@@ -229,7 +232,7 @@ end
 local processes = {
 	{ func = progress, args =  game.Workspace , name = "Optimizing Workspace" },
 	{ func = progress, args =  game.Lighting , name = "Optimizing Lighting" },
-	{ func = completion, args = nil, name = "Completing optimization" }
+	{ func = completion, args = nil, name = "Binding Dynamic Optimization" }
 }
 
 -- Main initialization function with GUI creation and process execution
@@ -371,7 +374,7 @@ function init()
 			updateProg(v.name, i/#processes)
 
 			if v.args then
-				v.func(v.args:GetDescendants())
+				v.func(v.args:GetDescendants(), true)
 			else
 				v.func()
 			end
@@ -387,13 +390,13 @@ function init()
 
 	pcall(function()
 		workspaceConnection = game.Workspace.DescendantAdded:Connect(function(obj)
-			progress({{obj}})
+			progress({{obj}}, false)
 		end)
 	end)
 
 	pcall(function()
 		lightingConnection = game.Lighting.DescendantAdded:Connect(function(obj)
-			progress({{obj}})
+			progress({{obj}}, false)
 		end)
 	end)
 
