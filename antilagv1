@@ -490,9 +490,9 @@ local function trackPlayer(plr: Player)
 		return
 	end
 	
-	-- Add current character if it exists
+	-- Add current character if it exists (fixes issue with players already in game)
 	pcall(function()
-		if plr.Character then
+		if plr.Character and plr.Character.Parent then
 			addCharacter(plr.Character)
 		end
 	end)
@@ -539,6 +539,15 @@ end)
 
 -- Initialize optimization when LocalPlayer spawns with enhanced error handling
 if LocalPlayer then
+	-- Handle if LocalPlayer already has a character when script runs
+	pcall(function()
+		if LocalPlayer.Character and LocalPlayer.Character.Parent then
+			addCharacter(LocalPlayer.Character)
+			task.wait(2)
+			init() -- Start optimization immediately if character already exists
+		end
+	end)
+	
 	pcall(function()
 		LocalPlayer.CharacterAdded:Connect(function(char)
 			local success, result = pcall(function()
