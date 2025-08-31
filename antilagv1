@@ -177,67 +177,47 @@ local function progress(args)
 	local totalProcessed = 0
 	local startTime = tick()
 
-	for _, container in pairs(args) do
-		if not container or not container.Parent then
-			warn("Skipping invalid container in progress function")
-			continue
-		end
+	for i, inst in ipairs(args) do
+		print(inst.Name)
+		if inst and inst.Parent and not skippable(inst) and notIgnore[inst.ClassName] then
+			local instanceSuccess = pcall(function()
+				for attr, val in pairs(notIgnore[inst.ClassName]) do
+					-- Check if property exists before setting
+					local hasProperty = pcall(function()
+						return inst[attr] ~= nil
+					end)
 
-		local containerProcessed = 0
-		
-
-		
-
-		for i, inst in ipairs(container) do
-			-- Validate instance before processing
-			if not inst or not inst.Parent then
-				continue -- Skip invalid instances
-			end
-
-			if not skippable(inst) and notIgnore[inst.ClassName] then
-				local instanceSuccess = pcall(function()
-					for attr, val in pairs(notIgnore[inst.ClassName]) do
-						-- Check if property exists before setting
-						local hasProperty = pcall(function()
-							return inst[attr] ~= nil
+					if hasProperty then
+						local setSuccess, setError = pcall(function()
+							inst[attr] = val
 						end)
 
-						if hasProperty then
-							local setSuccess, setError = pcall(function()
-								inst[attr] = val
-							end)
-
-							if setSuccess then
-								containerProcessed += 1
-							else
-								-- Only warn for unexpected property setting failures
-								if not string.find(tostring(setError), "locked") and 
-									not string.find(tostring(setError), "readonly") then
-									warn("Failed to set " .. attr .. " on " .. inst.ClassName .. ": " .. tostring(setError))
-								end
-							end
+						if setSuccess then
+							totalProcessed += 1
+						elseif not string.find(tostring(setError), "locked")
+							and not string.find(tostring(setError), "readonly") then
+							warn(`Failed to set {attr} on {inst.ClassName}: {tostring(setError)}`)
 						end
 					end
-				end)
-
-				if not instanceSuccess then
-					-- Silently continue for individual instance failures
 				end
-			end
+			end)
 
-			-- Yield periodically to prevent script timeout
-			if i % 100 == 0 then
-				task.wait()
+			-- silently skip if setting properties failed
+			if not instanceSuccess then
+				-- optional: log once if needed
 			end
 		end
 
-		totalProcessed += containerProcessed
-		print(string.format("Processed %d objects in %s", containerProcessed, container.Name))
+		-- yield every 100 instances to avoid timeout
+		if i % 100 == 0 then
+			task.wait()
+		end
 	end
 
 	local endTime = tick()
 	print(string.format("Total optimization completed: %d objects in %.2f seconds", totalProcessed, endTime - startTime))
 end
+
 
 -- Simple completion notification function
 local function completion()
@@ -247,8 +227,8 @@ end
 
 -- Define the optimization process steps
 local processes = {
-	{ func = progress, args = { game.Workspace:GetDescendants() }, name = "Optimizing Workspace" },
-	{ func = progress, args = { game.Lighting:GetDescendants() }, name = "Optimizing Lighting" },
+	{ func = progress, args =  game.Workspace , name = "Optimizing Workspace" },
+	{ func = progress, args =  game.Lighting , name = "Optimizing Lighting" },
 	{ func = completion, args = nil, name = "Completing optimization" }
 }
 
@@ -391,7 +371,7 @@ function init()
 			updateProg(v.name, i/#processes)
 
 			if v.args then
-				v.func(v.args)
+				v.func(v.args:GetDescendants())
 			else
 				v.func()
 			end
@@ -402,18 +382,18 @@ function init()
 		end
 	end
 
-	-- Set up real-time optimization for new objects with error handling (optimized to process only new objects)
+	-- Set up real-time optimization for new objects with error handling
 	local workspaceConnection, lightingConnection
 
-	workspaceConnection = pcall(function()
-		return game.Workspace.DescendantAdded:Connect(function(obj)
-			progress({obj})
+	pcall(function()
+		workspaceConnection = game.Workspace.DescendantAdded:Connect(function(obj)
+			progress({{obj}})
 		end)
 	end)
 
-	lightingConnection = pcall(function()
-		return game.Lighting.DescendantAdded:Connect(function(obj)
-			progress({obj})
+	pcall(function()
+		lightingConnection = game.Lighting.DescendantAdded:Connect(function(obj)
+			progress({{obj}})
 		end)
 	end)
 
