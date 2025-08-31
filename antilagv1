@@ -23,7 +23,7 @@ local function tween(o, p, t, s, d)
 		warn("Tween error: Properties parameter must be a valid table")
 		return nil
 	end
-	
+
 	local success, result = pcall(function()
 		local tweenInfo = TweenInfo.new(
 			t or 0.5, 
@@ -34,12 +34,12 @@ local function tween(o, p, t, s, d)
 		tweenObj:Play()
 		return tweenObj
 	end)
-	
+
 	if not success then
 		warn("Tween creation failed: " .. tostring(result))
 		return nil
 	end
-	
+
 	return result
 end
 
@@ -50,7 +50,7 @@ function skippable(inst:Instance)
 	if not inst or not inst.Parent then
 		return true -- Skip invalid or parentless instances
 	end
-	
+
 	-- Check whitelist protection (player characters, etc.)
 	if whitelist then
 		local success, result = pcall(function()
@@ -63,7 +63,7 @@ function skippable(inst:Instance)
 			end
 			return false
 		end)
-		
+
 		if success and result then
 			return true
 		end
@@ -85,7 +85,7 @@ function skippable(inst:Instance)
 		"Humanoid", "BodyMover", "BodyGyro", "BodyVelocity", 
 		"BodyForce", "BodyThrust", "BodyPosition", "BodyAngularVelocity", "Constraint"
 	}
-	
+
 	local success, isProtected = pcall(function()
 		for _, className in ipairs(protectedClasses) do
 			if inst:IsA(className) then
@@ -94,7 +94,7 @@ function skippable(inst:Instance)
 		end
 		return false
 	end)
-	
+
 	if success and isProtected then
 		return true
 	end
@@ -173,7 +173,7 @@ local function progress(args)
 		warn("Progress function called with no valid containers")
 		return
 	end
-	
+
 	local totalProcessed = 0
 	local startTime = tick()
 
@@ -182,23 +182,18 @@ local function progress(args)
 			warn("Skipping invalid container in progress function")
 			continue
 		end
-		
-		local containerProcessed = 0
-		local success, descendants = pcall(function()
-			return container:GetDescendants()
-		end)
-		
-		if not success then
-			warn("Failed to get descendants for container: " .. tostring(container.Name))
-			continue
-		end
 
-		for i, inst in ipairs(descendants) do
+		local containerProcessed = 0
+		
+
+		
+
+		for i, inst in ipairs(container) do
 			-- Validate instance before processing
 			if not inst or not inst.Parent then
 				continue -- Skip invalid instances
 			end
-			
+
 			if not skippable(inst) and notIgnore[inst.ClassName] then
 				local instanceSuccess = pcall(function()
 					for attr, val in pairs(notIgnore[inst.ClassName]) do
@@ -206,25 +201,25 @@ local function progress(args)
 						local hasProperty = pcall(function()
 							return inst[attr] ~= nil
 						end)
-						
+
 						if hasProperty then
 							local setSuccess, setError = pcall(function()
 								inst[attr] = val
 							end)
-							
+
 							if setSuccess then
 								containerProcessed += 1
 							else
 								-- Only warn for unexpected property setting failures
 								if not string.find(tostring(setError), "locked") and 
-								   not string.find(tostring(setError), "readonly") then
+									not string.find(tostring(setError), "readonly") then
 									warn("Failed to set " .. attr .. " on " .. inst.ClassName .. ": " .. tostring(setError))
 								end
 							end
 						end
 					end
 				end)
-				
+
 				if not instanceSuccess then
 					-- Silently continue for individual instance failures
 				end
@@ -252,8 +247,8 @@ end
 
 -- Define the optimization process steps
 local processes = {
-	{ func = progress, args = { game.Workspace }, name = "Optimizing Workspace" },
-	{ func = progress, args = { game.Lighting }, name = "Optimizing Lighting" },
+	{ func = progress, args = { game.Workspace:GetDescendants() }, name = "Optimizing Workspace" },
+	{ func = progress, args = { game.Lighting:GetDescendants() }, name = "Optimizing Lighting" },
 	{ func = completion, args = nil, name = "Completing optimization" }
 }
 
@@ -264,7 +259,7 @@ function init()
 		warn("LocalPlayer not available for GUI creation")
 		return
 	end
-	
+
 	local playerGui = LocalPlayer:WaitForChild("PlayerGui", 10)
 	if not playerGui then
 		warn("PlayerGui not found - cannot create optimization GUI")
@@ -283,7 +278,7 @@ function init()
 		gui.ResetOnSpawn = false
 		return gui
 	end)
-	
+
 	if not success then
 		warn("Failed to create ScreenGui")
 		return
@@ -371,94 +366,64 @@ function init()
 			warn("DisplayText element no longer exists")
 			return
 		end
-		
+
 		pcall(function()
 			G2L["7"].Text = tostring(display or "Processing...")
 		end)
-		
+
 		if G2L["6"] and G2L["6"].Parent then
 			pcall(function()
 				tween(G2L["6"], {Size = UDim2.new(math.clamp(howmuch or 0, 0, 1), 0, 1, 0)})
 			end)
 		end
-		
+
 		task.wait(0.5)
 	end
-	
+
 	-- Execute optimization processes with comprehensive error handling
 	for i, v in ipairs(processes) do
 		if not v or not v.func then
 			warn("Invalid process at index " .. i)
 			continue
 		end
-		
+
 		local processSuccess, processError = pcall(function()
 			updateProg(v.name, i/#processes)
-			
+
 			if v.args then
 				v.func(v.args)
 			else
 				v.func()
 			end
 		end)
-		
+
 		if not processSuccess then
 			warn("Process '" .. tostring(v.name) .. "' failed: " .. tostring(processError))
 		end
 	end
-	
+
 	-- Set up real-time optimization for new objects with error handling (optimized to process only new objects)
 	local workspaceConnection, lightingConnection
-	
+
 	workspaceConnection = pcall(function()
 		return game.Workspace.DescendantAdded:Connect(function(obj)
-			-- Only optimize the single new object, not all descendants
-			pcall(function()
-				if not skippable(obj) and notIgnore[obj.ClassName] then
-					for attr, val in pairs(notIgnore[obj.ClassName]) do
-						local hasProperty = pcall(function()
-							return obj[attr] ~= nil
-						end)
-						
-						if hasProperty then
-							pcall(function()
-								obj[attr] = val
-							end)
-						end
-					end
-				end
-			end)
+			progress({obj})
 		end)
 	end)
-	
+
 	lightingConnection = pcall(function()
 		return game.Lighting.DescendantAdded:Connect(function(obj)
-			-- Only optimize the single new object, not all descendants
-			pcall(function()
-				if not skippable(obj) and notIgnore[obj.ClassName] then
-					for attr, val in pairs(notIgnore[obj.ClassName]) do
-						local hasProperty = pcall(function()
-							return obj[attr] ~= nil
-						end)
-						
-						if hasProperty then
-							pcall(function()
-								obj[attr] = val
-							end)
-						end
-					end
-				end
-			end)
+			progress({obj})
 		end)
 	end)
-	
+
 	-- Update completion status with error handling
 	pcall(function()
 		if G2L["7"] and G2L["7"].Parent then
 			G2L["7"].Text = "Completed"
 		end
 	end)
-	
+
 	pcall(function() tween(G2L["6"], {BackgroundColor3 = Color3.fromRGB(0, 255, 102)}) end)
 	pcall(function() tween(G2L["7"], {TextColor3 = Color3.fromRGB(0, 255, 102)}) end)
 	task.wait(0.5)
@@ -479,7 +444,7 @@ local function addCharacter(char: Model)
 		warn("Attempted to add nil character to whitelist")
 		return
 	end
-	
+
 	local success, result = pcall(function()
 		if char and char:IsA("Model") and char.Parent then
 			table.insert(whitelist, char)
@@ -487,7 +452,7 @@ local function addCharacter(char: Model)
 		end
 		return false
 	end)
-	
+
 	if not success then
 		warn("Failed to add character to whitelist: " .. tostring(result))
 	end
@@ -498,7 +463,7 @@ local function removeCharacter(char: Model)
 	if not char then
 		return -- Silently handle nil character removal
 	end
-	
+
 	pcall(function()
 		for i, v in ipairs(whitelist) do
 			if v == char then
@@ -515,7 +480,7 @@ local function trackPlayer(plr: Player)
 		warn("Attempted to track invalid player")
 		return
 	end
-	
+
 	-- Add current character if it exists (fixes issue with players already in game)
 	pcall(function()
 		if plr.Character and plr.Character.Parent then
@@ -529,7 +494,7 @@ local function trackPlayer(plr: Player)
 			addCharacter(char)
 		end)
 	end)
-	
+
 	pcall(function()
 		plr.CharacterRemoving:Connect(function(char)
 			removeCharacter(char)
@@ -563,6 +528,7 @@ pcall(function()
 	end)
 end)
 
+task.wait(2)
 -- Initialize optimization when LocalPlayer spawns with enhanced error handling
 if LocalPlayer then
 	-- Handle if LocalPlayer already has a character when script runs
@@ -573,7 +539,7 @@ if LocalPlayer then
 			init() -- Start optimization immediately if character already exists
 		end
 	end)
-	
+
 	pcall(function()
 		LocalPlayer.CharacterAdded:Connect(function(char)
 			local success, result = pcall(function()
@@ -581,7 +547,7 @@ if LocalPlayer then
 				task.wait(2)
 				init() -- Start optimization process after LocalPlayer spawns
 			end)
-			
+
 			if not success then
 				warn("Failed during LocalPlayer character initialization: " .. tostring(result))
 			end
