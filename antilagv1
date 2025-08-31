@@ -1,1527 +1,563 @@
+--[=[
+ d888b  db    db d888888b      .d888b.      db      db    db  .d8b.  
+88' Y8b 88    88   `88'        VP  `8D      88      88    88 d8' `8b 
+88      88    88    88            odD'      88      88    88 88ooo88 
+88  ooo 88    88    88          .88'        88      88    88 88~~~88 
+88. ~8~ 88b  d88   .88.        j88.         88booo. 88b  d88 88   88    @uniquadev
+ Y888P  ~Y8888P' Y888888P      888888D      Y88888P ~Y8888P' YP   YP  CONVERTER 
+]=]
+
+
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Debris = game:GetService("Debris")
+local LocalPlayer = Players.LocalPlayer
 
-local player = Players.LocalPlayer
+local TS = game:GetService("TweenService")
 
--- Enhanced configuration with more granular settings
-local CONFIG = {
-    radius = 100,
-    maxSelectionBoxes = 30,
-    batchSize = 150, -- Reduced for better frame consistency
-    animationSpeed = 0.35,
-    updateInterval = 1/30, -- 30 FPS for selection boxes
-    maxProcessingTime = 1/60, -- Max time per frame for processing
-    adaptiveBatching = true,
-    performanceMode = false, -- Toggleable performance mode
-    memoryThreshold = 500000, -- KB threshold for aggressive cleanup
-    fpsThreshold = 30 -- FPS threshold for performance adjustments
+-- Enhanced tween function with comprehensive error handling
+local function tween(o, p, t, s, d)
+	if not o then
+		warn("Tween error: Object parameter is nil or invalid")
+		return nil
+	end
+	if not p or type(p) ~= "table" then
+		warn("Tween error: Properties parameter must be a valid table")
+		return nil
+	end
+	
+	local success, result = pcall(function()
+		local tweenInfo = TweenInfo.new(
+			t or 0.5, 
+			s or Enum.EasingStyle.Quad, 
+			d or Enum.EasingDirection.Out
+		)
+		local tweenObj = TS:Create(o, tweenInfo, p)
+		tweenObj:Play()
+		return tweenObj
+	end)
+	
+	if not success then
+		warn("Tween creation failed: " .. tostring(result))
+		return nil
+	end
+	
+	return result
+end
+
+local whitelist = {}
+
+-- Function to determine if an instance should be skipped during optimization
+function skippable(inst:Instance)
+	if not inst or not inst.Parent then
+		return true -- Skip invalid or parentless instances
+	end
+	
+	-- Check whitelist protection (player characters, etc.)
+	if whitelist then
+		local success, result = pcall(function()
+			for _, v in pairs(whitelist) do
+				if v and typeof(v) == "Instance" and v.Parent then
+					if inst:IsDescendantOf(v) then
+						return true
+					end
+				end
+			end
+			return false
+		end)
+		
+		if success and result then
+			return true
+		end
+	end
+
+	-- Protect critical game services
+	local protectedServices = {
+		["Players"] = true,
+		["ReplicatedFirst"] = true,
+		["ReplicatedStorage"] = true,
+		["StarterPlayer"] = true
+	}
+	if protectedServices[inst.Name] then
+		return true
+	end
+
+	-- Protect character movement and physics components
+	local protectedClasses = {
+		"Humanoid", "BodyMover", "BodyGyro", "BodyVelocity", 
+		"BodyForce", "BodyThrust", "BodyPosition", "BodyAngularVelocity", "Constraint"
+	}
+	
+	local success, isProtected = pcall(function()
+		for _, className in ipairs(protectedClasses) do
+			if inst:IsA(className) then
+				return true
+			end
+		end
+		return false
+	end)
+	
+	if success and isProtected then
+		return true
+	end
+
+	return false
+end
+
+-- Optimization settings for different object types
+local notIgnore = {
+	-- 3D geometry parts - optimize materials and shadows
+	["BasePart"] = {
+		Material = Enum.Material.SmoothPlastic,
+		Reflectance = 0,
+		CastShadow = false
+	},
+	["Part"] = {
+		Material = Enum.Material.SmoothPlastic,
+		Reflectance = 0,
+		CastShadow = false
+	},
+	["MeshPart"] = {
+		Material = Enum.Material.SmoothPlastic,
+		Reflectance = 0,
+		CastShadow = false,
+		TextureID = ""
+	},
+	["TrussPart"] = {
+		Material = Enum.Material.SmoothPlastic,
+		Reflectance = 0,
+		CastShadow = false
+	},
+	["UnionOperation"] = {
+		Material = Enum.Material.SmoothPlastic,
+		Reflectance = 0,
+		CastShadow = false
+	},
+
+	-- Disable visual effects for performance
+	["Smoke"] = { Enabled = false },
+	["Fire"] = { Enabled = false },
+	["Trail"] = { Enabled = false },
+	["Beam"] = { Enabled = false },
+	["ParticleEmitter"] = { Enabled = false, Rate = 0 },
+	["Explosion"] = { Visible = false },
+
+	-- Disable lighting effects
+	["PointLight"] = { Enabled = false, Brightness = 0 },
+	["SpotLight"]  = { Enabled = false, Brightness = 0 },
+	["SurfaceLight"] = { Enabled = false, Brightness = 0 },
+	["Highlight"] = { Enabled = false, FillTransparency = 1, OutlineTransparency = 1 },
+
+	-- Hide textures and decals
+	["Texture"] = { Transparency = 1 },
+	["Decal"] = { Transparency = 1 },
+
+	-- Minimize atmospheric effects
+	["Sky"] = {
+		CelestialBodiesShown = false,
+		EnvironmentDiffuseScale = 0,
+		EnvironmentSpecularScale = 0,
+		SunAngularSize = 0
+	},
+	["Atmosphere"] = { Density = 0, Offset = 0 },
+	["Clouds"] = { Cover = 0 },
+
+	-- Disable post-processing effects
+	["BloomEffect"] = { Enabled = false, Size = 0, Intensity = 0 },
+	["BlurEffect"] = { Enabled = false, Size = 0 },
+	["ColorCorrectionEffect"] = { Enabled = false, Brightness = 0, Contrast = 0, Saturation = 0 },
+	["SunRaysEffect"] = { Enabled = false, Intensity = 0, Spread = 0 }
 }
 
--- Core state management with better organization
-local AntiLagSystem = {
-    -- State flags
-    isActive = false,
-    isProcessing = false,
-    isPaused = false,
-    performanceMode = false,
-    
-    -- GUI references
-    gui = nil,
-    toggleButton = nil,
-    statusIndicator = nil,
-    
-    -- System components
-    selectionBoxes = {},
-    ignoredObjects = {},
-    connections = {},
-    tweens = {},
-    
-    -- Performance tracking
-    stats = {
-        optimizedObjects = 0,
-        savedMemory = 0,
-        currentFPS = 60,
-        startTime = 0,
-        lastFrameTime = tick()
-    },
-    
-    -- Object pools for better memory management
-    pools = {
-        selectionBoxes = {},
-        tweens = {}
-    }
+-- Main optimization function with enhanced error handling and progress tracking
+local function progress(args)
+	if not args or #args == 0 then
+		warn("Progress function called with no valid containers")
+		return
+	end
+	
+	local totalProcessed = 0
+	local startTime = tick()
+
+	for _, container in pairs(args) do
+		if not container or not container.Parent then
+			warn("Skipping invalid container in progress function")
+			continue
+		end
+		
+		local containerProcessed = 0
+		local success, descendants = pcall(function()
+			return container:GetDescendants()
+		end)
+		
+		if not success then
+			warn("Failed to get descendants for container: " .. tostring(container.Name))
+			continue
+		end
+
+		for i, inst in ipairs(descendants) do
+			-- Validate instance before processing
+			if not inst or not inst.Parent then
+				continue -- Skip invalid instances
+			end
+			
+			if not skippable(inst) and notIgnore[inst.ClassName] then
+				local instanceSuccess = pcall(function()
+					for attr, val in pairs(notIgnore[inst.ClassName]) do
+						-- Check if property exists before setting
+						local hasProperty = pcall(function()
+							return inst[attr] ~= nil
+						end)
+						
+						if hasProperty then
+							local setSuccess, setError = pcall(function()
+								inst[attr] = val
+							end)
+							
+							if setSuccess then
+								containerProcessed += 1
+							else
+								-- Only warn for unexpected property setting failures
+								if not string.find(tostring(setError), "locked") and 
+								   not string.find(tostring(setError), "readonly") then
+									warn("Failed to set " .. attr .. " on " .. inst.ClassName .. ": " .. tostring(setError))
+								end
+							end
+						end
+					end
+				end)
+				
+				if not instanceSuccess then
+					-- Silently continue for individual instance failures
+				end
+			end
+
+			-- Yield periodically to prevent script timeout
+			if i % 100 == 0 then
+				task.wait()
+			end
+		end
+
+		totalProcessed += containerProcessed
+		print(string.format("Processed %d objects in %s", containerProcessed, container.Name))
+	end
+
+	local endTime = tick()
+	print(string.format("Total optimization completed: %d objects in %.2f seconds", totalProcessed, endTime - startTime))
+end
+
+-- Simple completion notification function
+local function completion()
+	print("Optimization completed successfully.")
+	task.wait(2)
+end
+
+-- Define the optimization process steps
+local processes = {
+	{ func = progress, args = { game.Workspace }, name = "Optimizing Workspace" },
+	{ func = progress, args = { game.Lighting }, name = "Optimizing Lighting" },
+	{ func = completion, args = nil, name = "Completing optimization" }
 }
 
--- Enhanced utility functions
-local Utils = {}
+-- Main initialization function with GUI creation and process execution
+function init()
+	-- Validate LocalPlayer before proceeding
+	if not LocalPlayer or not LocalPlayer.Parent then
+		warn("LocalPlayer not available for GUI creation")
+		return
+	end
+	
+	local playerGui = LocalPlayer:WaitForChild("PlayerGui", 10)
+	if not playerGui then
+		warn("PlayerGui not found - cannot create optimization GUI")
+		return
+	end
 
--- Improved tween utility with tween pooling
-function Utils.createTween(object, duration, properties, style, direction, callback)
-    if not object or not object.Parent then return nil end
-    
-    style = style or Enum.EasingStyle.Quint
-    direction = direction or Enum.EasingDirection.Out
-    duration = duration or CONFIG.animationSpeed
-    
-    local tweenInfo = TweenInfo.new(duration, style, direction)
-    local tween = TweenService:Create(object, tweenInfo, properties)
-    
-    -- Store tween reference for cleanup
-    table.insert(AntiLagSystem.tweens, tween)
-    
-    -- Handle completion
-    if callback then
-        tween.Completed:Connect(callback)
-    end
-    
-    tween.Completed:Connect(function()
-        -- Remove from active tweens
-        for i, activeTween in ipairs(AntiLagSystem.tweens) do
-            if activeTween == tween then
-                table.remove(AntiLagSystem.tweens, i)
-                break
-            end
-        end
-    end)
-    
-    tween:Play()
-    return tween
+	-- Create GUI instances with error handling
+	local G2L = {};
+
+	-- Main ScreenGui container
+	local success, screenGui = pcall(function()
+		local gui = Instance.new("ScreenGui", playerGui)
+		gui.IgnoreGuiInset = true
+		gui.ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets
+		gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+		gui.ResetOnSpawn = false
+		return gui
+	end)
+	
+	if not success then
+		warn("Failed to create ScreenGui")
+		return
+	end
+	G2L["1"] = screenGui
+
+	-- Background frame
+	G2L["2"] = Instance.new("Frame", G2L["1"]);
+	G2L["2"]["BorderSizePixel"] = 0;
+	G2L["2"]["BackgroundColor3"] = Color3.fromRGB(0, 0, 0);
+	G2L["2"]["AnchorPoint"] = Vector2.new(0.5, 0.5);
+	G2L["2"]["Size"] = UDim2.new(0.35998, 0, 0.57803, 0);
+	G2L["2"]["Position"] = UDim2.new(0.5, 0, 0.49913, 0);
+	G2L["2"]["BorderColor3"] = Color3.fromRGB(0, 0, 0);
+	G2L["2"]["Name"] = [[BG]];
+	G2L["2"]["BackgroundTransparency"] = 1;
+
+	-- Aspect ratio constraint
+	G2L["3"] = Instance.new("UIAspectRatioConstraint", G2L["2"]);
+	G2L["3"]["DominantAxis"] = Enum.DominantAxis.Height;
+	G2L["3"]["AspectRatio"] = 1.75;
+
+	-- Glow background image
+	G2L["4"] = Instance.new("ImageLabel", G2L["2"]);
+	G2L["4"]["BorderSizePixel"] = 0;
+	G2L["4"]["BackgroundColor3"] = Color3.fromRGB(255, 255, 255);
+	G2L["4"]["ImageTransparency"] = 1;
+	G2L["4"]["ImageColor3"] = Color3.fromRGB(0, 61, 255);
+	G2L["4"]["AnchorPoint"] = Vector2.new(0.5, 0.5);
+	G2L["4"]["Image"] = [[rbxassetid://64212796]];
+	G2L["4"]["Size"] = UDim2.new(1, 0, 1, 0);
+	G2L["4"]["BorderColor3"] = Color3.fromRGB(0, 0, 0);
+	G2L["4"]["BackgroundTransparency"] = 1;
+	G2L["4"]["Rotation"] = 180;
+	G2L["4"]["Name"] = [[GlowBG]];
+	G2L["4"]["Position"] = UDim2.new(0.5, 0, 0.5, 0);
+
+	-- Loading progress bar container
+	G2L["5"] = Instance.new("Frame", G2L["2"]);
+	G2L["5"]["BorderSizePixel"] = 0;
+	G2L["5"]["BackgroundColor3"] = Color3.fromRGB(255, 255, 255);
+	G2L["5"]["AnchorPoint"] = Vector2.new(0.5, 0.5);
+	G2L["5"]["Size"] = UDim2.new(0.75, 0, 0.025, 0);
+	G2L["5"]["Position"] = UDim2.new(0.5, 0, 0.65, 0);
+	G2L["5"]["BorderColor3"] = Color3.fromRGB(0, 0, 0);
+	G2L["5"]["Name"] = [[LoadingBar]];
+	G2L["5"]["BackgroundTransparency"] = 1;
+
+	-- Progress bar fill indicator
+	G2L["6"] = Instance.new("Frame", G2L["5"]);
+	G2L["6"]["BorderSizePixel"] = 0;
+	G2L["6"]["BackgroundColor3"] = Color3.fromRGB(0, 0, 255);
+	G2L["6"]["Size"] = UDim2.new(0, 0, 1, 0);
+	G2L["6"]["BorderColor3"] = Color3.fromRGB(0, 0, 0);
+	G2L["6"]["Name"] = [[Progress]];
+	G2L["6"]["BackgroundTransparency"] = 0;
+
+	-- Status text display
+	G2L["7"] = Instance.new("TextLabel", G2L["2"]);
+	G2L["7"]["TextWrapped"] = true;
+	G2L["7"]["BorderSizePixel"] = 0;
+	G2L["7"]["TextSize"] = 14;
+	G2L["7"]["TextTransparency"] = 1;
+	G2L["7"]["TextScaled"] = true;
+	G2L["7"]["BackgroundColor3"] = Color3.fromRGB(255, 255, 255);
+	G2L["7"]["FontFace"] = Font.new([[rbxasset://fonts/families/SourceSansPro.json]], Enum.FontWeight.Bold, Enum.FontStyle.Normal);
+	G2L["7"]["TextColor3"] = Color3.fromRGB(255, 255, 255);
+	G2L["7"]["BackgroundTransparency"] = 1;
+	G2L["7"]["AnchorPoint"] = Vector2.new(0.5, 0.5);
+	G2L["7"]["Size"] = UDim2.new(0.75, 0, 0.1, 0);
+	G2L["7"]["BorderColor3"] = Color3.fromRGB(0, 0, 0);
+	G2L["7"]["Text"] = [[Loading]];
+	G2L["7"]["Name"] = [[DisplayText]];
+	G2L["7"]["Position"] = UDim2.new(0.5, 0, 0.55, 0);
+
+	-- Animate GUI elements into view with error handling
+	pcall(function() tween(G2L["2"], {BackgroundTransparency = 0}) end)
+	pcall(function() tween(G2L["4"], {ImageTransparency = 0}) end)
+	pcall(function() tween(G2L["7"], {TextTransparency = 0}) end)
+	pcall(function() tween(G2L["5"], {BackgroundTransparency = 0}) end)
+
+	-- Update progress display with error handling
+	local function updateProg(display, howmuch)
+		if not G2L["7"] or not G2L["7"].Parent then
+			warn("DisplayText element no longer exists")
+			return
+		end
+		
+		pcall(function()
+			G2L["7"].Text = tostring(display or "Processing...")
+		end)
+		
+		if G2L["6"] and G2L["6"].Parent then
+			pcall(function()
+				tween(G2L["6"], {Size = UDim2.new(math.clamp(howmuch or 0, 0, 1), 0, 1, 0)})
+			end)
+		end
+		
+		task.wait(0.5)
+	end
+	
+	-- Execute optimization processes with comprehensive error handling
+	for i, v in ipairs(processes) do
+		if not v or not v.func then
+			warn("Invalid process at index " .. i)
+			continue
+		end
+		
+		local processSuccess, processError = pcall(function()
+			updateProg(v.name, i/#processes)
+			
+			if v.args then
+				v.func(v.args)
+			else
+				v.func()
+			end
+		end)
+		
+		if not processSuccess then
+			warn("Process '" .. tostring(v.name) .. "' failed: " .. tostring(processError))
+		end
+	end
+	
+	-- Set up real-time optimization for new objects with error handling
+	local workspaceConnection, lightingConnection
+	
+	workspaceConnection = pcall(function()
+		return game.Workspace.DescendantAdded:Connect(function(obj)
+			pcall(function()
+				progress({game.workspace})
+			end)
+		end)
+	end)
+	
+	lightingConnection = pcall(function()
+		return game.Lighting.DescendantAdded:Connect(function(obj)
+			pcall(function()
+				progress({game.Lighting})
+			end)
+		end)
+	end)
+	
+	-- Update completion status with error handling
+	pcall(function()
+		if G2L["7"] and G2L["7"].Parent then
+			G2L["7"].Text = "Completed"
+		end
+	end)
+	
+	pcall(function() tween(G2L["6"], {BackgroundColor3 = Color3.fromRGB(0, 255, 102)}) end)
+	pcall(function() tween(G2L["7"], {TextColor3 = Color3.fromRGB(0, 255, 102)}) end)
+	task.wait(0.5)
+
+	-- Fade out GUI elements with error handling
+	pcall(function() tween(G2L["2"], {BackgroundTransparency = 1}) end)
+	pcall(function() tween(G2L["4"], {ImageTransparency = 1}) end)
+	pcall(function() tween(G2L["7"], {TextTransparency = 1}) end)
+	pcall(function() tween(G2L["5"], {BackgroundTransparency = 1}) end)
+	pcall(function() tween(G2L["6"], {BackgroundTransparency = 1}) end)
 end
 
--- Safe property setter with better error handling
-function Utils.setProperties(object, properties)
-    if not object or type(properties) ~= "table" then return false end
-    
-    local success = true
-    for prop, value in pairs(properties) do
-        local ok, err = pcall(function()
-            object[prop] = value
-        end)
-        if not ok then
-            warn(string.format("Property '%s' failed on %s: %s", prop, object.Name or "Unknown", tostring(err)))
-            success = false
-        end
-    end
-    return success
+-- Character management functions with error handling
+
+-- Add a character model to the whitelist for protection
+local function addCharacter(char: Model)
+	if not char then
+		warn("Attempted to add nil character to whitelist")
+		return
+	end
+	
+	local success, result = pcall(function()
+		if char and char:IsA("Model") and char.Parent then
+			table.insert(whitelist, char)
+			return true
+		end
+		return false
+	end)
+	
+	if not success then
+		warn("Failed to add character to whitelist: " .. tostring(result))
+	end
 end
 
--- Enhanced instance creator with validation
-function Utils.createInstance(className, parent, properties)
-    local success, instance = pcall(Instance.new, className)
-    if not success then
-        warn("Failed to create instance:", className)
-        return nil
-    end
-    
-    -- Set parent first to avoid potential issues
-    if parent then
-        instance.Parent = parent
-    end
-    
-    -- Apply properties if provided
-    if properties then
-        Utils.setProperties(instance, properties)
-    end
-    
-    return instance
+-- Remove a character model from the whitelist
+local function removeCharacter(char: Model)
+	if not char then
+		return -- Silently handle nil character removal
+	end
+	
+	pcall(function()
+		for i, v in ipairs(whitelist) do
+			if v == char then
+				table.remove(whitelist, i)
+				break
+			end
+		end
+	end)
 end
 
--- Performance monitoring utilities
-function Utils.updatePerformanceStats()
-    local stats = game:GetService("Stats")
-    local renderStats = stats:FindFirstChild("Render")
-    local networkStats = stats:FindFirstChild("Network")
-    
-    -- Update FPS
-    local currentTime = tick()
-    local deltaTime = currentTime - AntiLagSystem.stats.lastFrameTime
-    AntiLagSystem.stats.currentFPS = math.floor(1 / deltaTime)
-    AntiLagSystem.stats.lastFrameTime = currentTime
-    
-    -- Update memory usage
-    local memoryUsage = collectgarbage("count")
-    
-    -- Auto-adjust performance mode
-    if memoryUsage > CONFIG.memoryThreshold or AntiLagSystem.stats.currentFPS < CONFIG.fpsThreshold then
-        if not AntiLagSystem.performanceMode then
-            AntiLagSystem:enablePerformanceMode()
-        end
-    elseif AntiLagSystem.performanceMode and memoryUsage < CONFIG.memoryThreshold * 0.8 then
-        AntiLagSystem:disablePerformanceMode()
-    end
+-- Set up character tracking for any player with error handling
+local function trackPlayer(plr: Player)
+	if not plr or not plr.Parent then
+		warn("Attempted to track invalid player")
+		return
+	end
+	
+	-- Add current character if it exists
+	pcall(function()
+		if plr.Character then
+			addCharacter(plr.Character)
+		end
+	end)
+
+	-- Listen for character spawns and removals with error handling
+	pcall(function()
+		plr.CharacterAdded:Connect(function(char)
+			addCharacter(char)
+		end)
+	end)
+	
+	pcall(function()
+		plr.CharacterRemoving:Connect(function(char)
+			removeCharacter(char)
+		end)
+	end)
 end
 
--- Optimized part modification with more comprehensive checks
-function Utils.optimizePart(object, aggressive)
-    if not object or not object.Parent then return false end
-    
-    local optimized = false
-    local success = pcall(function()
-        -- Remove visual effects and sounds
-        if object:IsA("Texture") or object:IsA("Decal") or object:IsA("ParticleEmitter") 
-            or object:IsA("Smoke") or object:IsA("Fire") or object:IsA("Beam") 
-            or object:IsA("Trail") or object:IsA("Explosion") or object:IsA("Sound")
-            or object:IsA("PointLight") or object:IsA("SpotLight") or object:IsA("SurfaceLight") then
-            object:Destroy()
-            optimized = true
-            
-        elseif object:IsA("BasePart") or object:IsA("MeshPart") then
-            local originalTransparency = object.Transparency
-            
-            -- Only modify if not already optimized
-            if object.Transparency < 0.99 then
-                object.Transparency = aggressive and 1 or 0.95
-                object.CanCollide = false
-                object.Material = Enum.Material.SmoothPlastic
-                object.CastShadow = false
-                optimized = true
-                
-                -- More aggressive optimizations in performance mode
-                if aggressive then
-                    object.Anchored = true
-                    if object:IsA("MeshPart") then
-                        object.RenderFidelity = Enum.RenderFidelity.Performance
-                    end
-                end
-            end
-            
-            -- Remove or simplify child objects
-            for _, child in ipairs(object:GetChildren()) do
-                if child:IsA("SpecialMesh") then
-                    if aggressive then
-                        child:Destroy()
-                    else
-                        child.TextureId = ""
-                    end
-                    optimized = true
-                elseif child:IsA("Decal") or child:IsA("Texture") or child:IsA("SurfaceGui") then
-                    child:Destroy()
-                    optimized = true
-                elseif child:IsA("Weld") or child:IsA("Motor6D") then
-                    -- Keep these for functionality
-                    continue
-                end
-            end
-        end
-    end)
-    
-    if not success then
-        warn("Failed to optimize object:", object.Name)
-        return false
-    end
-    
-    if optimized then
-        AntiLagSystem.stats.optimizedObjects = AntiLagSystem.stats.optimizedObjects + 1
-    end
-    
-    return optimized
-end
-
--- Enhanced batch processing with adaptive yielding and pause support
-function Utils.processWorkspace(progressCallback, options)
-    if AntiLagSystem.isProcessing then return end
-    
-    AntiLagSystem.isProcessing = true
-    AntiLagSystem.isPaused = false
-    options = options or {}
-    
-    local allObjects = workspace:GetDescendants()
-    local total = #allObjects
-    local processed = 0
-    local optimized = 0
-    local startTime = tick()
-    local lastYieldTime = startTime
-    
-    AntiLagSystem.stats.startTime = startTime
-    
-    -- Process in batches with adaptive yielding
-    for i, object in ipairs(allObjects) do
-        -- Check for pause
-        while AntiLagSystem.isPaused do
-            task.wait(0.1)
-        end
-        
-        -- Early exit if cancelled
-        if not AntiLagSystem.isProcessing then
-            break
-        end
-        
-        -- Skip ignored objects
-        if not object.Parent or AntiLagSystem.ignoredObjects[object] then
-            processed = processed + 1
-            continue
-        end
-        
-        -- Optimize the object
-        local wasOptimized = Utils.optimizePart(object, AntiLagSystem.performanceMode)
-        if wasOptimized then
-            optimized = optimized + 1
-        end
-        
-        processed = processed + 1
-        
-        -- Adaptive yielding based on performance
-        local currentTime = tick()
-        local frameTime = currentTime - lastYieldTime
-        local shouldYield = false
-        
-        if CONFIG.adaptiveBatching then
-            -- Dynamic batch size based on performance
-            local targetFrameTime = 1 / (CONFIG.fpsThreshold * 1.2) -- 20% buffer
-            if frameTime > targetFrameTime or i % CONFIG.batchSize == 0 then
-                shouldYield = true
-            end
-        else
-            -- Fixed batch size
-            if i % CONFIG.batchSize == 0 then
-                shouldYield = true
-            end
-        end
-        
-        if shouldYield then
-            task.wait()
-            lastYieldTime = tick()
-            
-            -- Update progress
-            if progressCallback then
-                local progress = processed / total
-                local speed = processed / (currentTime - startTime)
-                local eta = (total - processed) / speed
-                progressCallback(progress, processed, total, optimized, eta)
-            end
-        end
-    end
-    
-    -- Final completion
-    AntiLagSystem.isProcessing = false
-    if not AntiLagSystem.isPaused then
-        AntiLagSystem.isActive = true
-        
-        if progressCallback then
-            progressCallback(1, total, total, optimized, 0)
-        end
-    end
-    
-    -- Cleanup memory
-    collectgarbage("collect")
-end
-
--- Enhanced selection box system with spatial optimization
-function Utils.updateSelectionBoxes()
-    local camera = workspace.CurrentCamera
-    if not camera or not player.Character or AntiLagSystem.performanceMode then return end
-    
-    local character = player.Character
-    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
-    if not humanoidRootPart then return end
-    
-    local cameraPosition = camera.CFrame.Position
-    local playerPosition = humanoidRootPart.Position
-    
-    -- Use spatial queries for better performance
-    local nearbyParts = {}
-    
-    -- Try region-based detection first
-    local success, parts = pcall(function()
-        local region = Region3.new(
-            cameraPosition - Vector3.new(CONFIG.radius, CONFIG.radius, CONFIG.radius),
-            cameraPosition + Vector3.new(CONFIG.radius, CONFIG.radius, CONFIG.radius)
-        )
-        
-        return workspace:ReadVoxels(region, 4)
-    end)
-    
-    if success and type(parts) == "table" then
-        nearbyParts = parts
-    else
-        -- Fallback to radius-based detection with filtering
-        local params = OverlapParams.new()
-        params.FilterType = Enum.RaycastFilterType.Blacklist
-        params.FilterDescendantsInstances = {character}
-        params.MaxParts = CONFIG.maxSelectionBoxes * 2 -- Get more parts for better selection
-        
-        local foundParts = workspace:GetPartBoundsInRadius(cameraPosition, CONFIG.radius, params)
-        
-        -- Filter out ignored objects and sort by distance
-        for _, part in ipairs(foundParts) do
-            if not AntiLagSystem.ignoredObjects[part] and part:IsA("BasePart") then
-                table.insert(nearbyParts, part)
-            end
-        end
-    end
-    
-    if #nearbyParts == 0 then return end
-    
-    -- Sort by relevance (distance + size)
-    table.sort(nearbyParts, function(a, b)
-        if not a.Position or not b.Position then return false end
-        
-        local distA = (a.Position - cameraPosition).Magnitude
-        local distB = (b.Position - cameraPosition).Magnitude
-        local sizeA = a.Size.Magnitude
-        local sizeB = b.Size.Magnitude
-        
-        -- Prioritize closer and larger objects
-        local scoreA = (1 / (distA + 1)) * (sizeA / 10)
-        local scoreB = (1 / (distB + 1)) * (sizeB / 10)
-        
-        return scoreA > scoreB
-    end)
-    
-    -- Update selection boxes with improved visuals
-    for i, selectionBox in ipairs(AntiLagSystem.selectionBoxes) do
-        local part = nearbyParts[i]
-        if part and part.Parent and not AntiLagSystem.ignoredObjects[part] then
-            selectionBox.Adornee = part
-            
-            local distance = (part.Position - cameraPosition).Magnitude
-            local intensity = math.max(0.1, 1 - (distance / CONFIG.radius))
-            
-            -- Dynamic color based on optimization status
-            local isOptimized = part.Transparency > 0.9
-            local hue = isOptimized and 0.3 or (intensity * 0.1) -- Green for optimized, red-orange for unoptimized
-            local saturation = isOptimized and 0.6 or 0.8
-            
-            selectionBox.Color3 = Color3.fromHSV(hue, saturation, 1)
-            selectionBox.Transparency = 0.1 + (1 - intensity) * 0.3
-            selectionBox.LineThickness = 0.03 + intensity * 0.07
-        else
-            selectionBox.Adornee = nil
-        end
-    end
-end
-
--- Improved selection box initialization with pooling
-function Utils.createSelectionBoxes()
-    for i = 1, CONFIG.maxSelectionBoxes do
-        local selectionBox = Utils.createInstance("SelectionBox", workspace, {
-            Color3 = Color3.fromRGB(255, 100, 100),
-            LineThickness = 0.05,
-            SurfaceTransparency = 0.95,
-            SurfaceColor3 = Color3.fromRGB(255, 50, 50),
-            Transparency = 0.2,
-            Visible = true
-        })
-        
-        if selectionBox then
-            table.insert(AntiLagSystem.selectionBoxes, selectionBox)
-        end
-    end
-end
-
--- Enhanced progress dialog with more detailed information
-function Utils.createProgressDialog(parent)
-    local container, dialog, content = Utils.createDialog(parent, {
-        width = 0.55, 
-        height = 0.5,
-        title = "🚀 Workspace Optimization"
-    })
-    
-    -- Progress ring container
-    local progressContainer = Utils.createInstance("Frame", content, {
-        Name = "ProgressContainer",
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Size = UDim2.fromScale(0.4, 0.6),
-        Position = UDim2.fromScale(0.3, 0.5),
-        BackgroundTransparency = 1,
-        ZIndex = 204
-    })
-    
-    -- Animated progress circle
-    local progressCircle = Utils.createInstance("Frame", progressContainer, {
-        Name = "ProgressCircle",
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Size = UDim2.fromScale(1, 1),
-        Position = UDim2.fromScale(0.5, 0.5),
-        BackgroundTransparency = 1,
-        ZIndex = 204
-    })
-    
-    -- Create circular progress indicator
-    for i = 1, 12 do
-        local dot = Utils.createInstance("Frame", progressCircle, {
-            Name = "Dot" .. i,
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Size = UDim2.fromOffset(8, 8),
-            BackgroundColor3 = Color3.fromRGB(100, 200, 255),
-            BorderSizePixel = 0,
-            ZIndex = 205
-        })
-        
-        Utils.createInstance("UICorner", dot, {CornerRadius = UDim.new(0.5, 0)})
-        
-        local angle = (i - 1) * (360 / 12)
-        local rad = math.rad(angle)
-        local radius = 0.4
-        local x = 0.5 + radius * math.cos(rad)
-        local y = 0.5 + radius * math.sin(rad)
-        
-        dot.Position = UDim2.fromScale(x, y)
-        
-        -- Staggered animation
-        task.spawn(function()
-            while dot.Parent do
-                Utils.createTween(dot, 0.5, {BackgroundTransparency = 0.8}, Enum.EasingStyle.Sine)
-                task.wait(0.5 + (i - 1) * 0.1)
-                Utils.createTween(dot, 0.5, {BackgroundTransparency = 0.2}, Enum.EasingStyle.Sine)
-                task.wait(0.5)
-            end
-        end)
-    end
-    
-    -- Stats panel
-    local statsPanel = Utils.createInstance("Frame", content, {
-        Name = "StatsPanel",
-        AnchorPoint = Vector2.new(1, 0.5),
-        Size = UDim2.fromScale(0.55, 0.8),
-        Position = UDim2.fromScale(0.95, 0.5),
-        BackgroundColor3 = Color3.fromRGB(30, 30, 40),
-        BackgroundTransparency = 0.3,
-        BorderSizePixel = 0,
-        ZIndex = 204
-    })
-    
-    Utils.createInstance("UICorner", statsPanel, {CornerRadius = UDim.new(0, 12)})
-    Utils.createInstance("UIPadding", statsPanel, {
-        PaddingTop = UDim.new(0, 15),
-        PaddingBottom = UDim.new(0, 15),
-        PaddingLeft = UDim.new(0, 20),
-        PaddingRight = UDim.new(0, 20)
-    })
-    
-    -- Stats layout
-    local statsLayout = Utils.createInstance("UIListLayout", statsPanel, {
-        FillDirection = Enum.FillDirection.Vertical,
-        Padding = UDim.new(0, 8),
-        HorizontalAlignment = Enum.HorizontalAlignment.Left,
-        VerticalAlignment = Enum.VerticalAlignment.Top
-    })
-    
-    -- Create stat labels
-    local function createStatLabel(name, initialText)
-        return Utils.createInstance("TextLabel", statsPanel, {
-            Name = name,
-            Size = UDim2.new(1, 0, 0, 25),
-            BackgroundTransparency = 1,
-            Text = initialText,
-            TextColor3 = Color3.fromRGB(220, 220, 220),
-            TextScaled = true,
-            Font = Enum.Font.Gotham,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            ZIndex = 205
-        })
-    end
-    
-    local progressLabel = createStatLabel("Progress", "Progress: 0%")
-    local objectsLabel = createStatLabel("Objects", "Objects: 0 / 0")
-    local optimizedLabel = createStatLabel("Optimized", "Optimized: 0")
-    local speedLabel = createStatLabel("Speed", "Speed: 0 obj/s")
-    local etaLabel = createStatLabel("ETA", "ETA: Calculating...")
-    local fpsLabel = createStatLabel("FPS", "FPS: --")
-    local memoryLabel = createStatLabel("Memory", "Memory: -- MB")
-    
-    -- Performance monitoring
-    local perfConnection = RunService.Heartbeat:Connect(function()
-        if fpsLabel and fpsLabel.Parent then
-            Utils.updatePerformanceStats()
-            fpsLabel.Text = string.format("FPS: %d", AntiLagSystem.stats.currentFPS)
-            memoryLabel.Text = string.format("Memory: %.1f MB", collectgarbage("count") / 1024)
-        else
-            perfConnection:Disconnect()
-        end
-    end)
-    
-    -- Progress update function
-    local function updateProgress(progress, processed, total, optimized, eta)
-        if not dialog or not dialog.Parent then return end
-        
-        -- Update labels
-        if progressLabel and progressLabel.Parent then
-            progressLabel.Text = string.format("Progress: %d%%", math.floor(progress * 100))
-        end
-        
-        if objectsLabel and objectsLabel.Parent then
-            objectsLabel.Text = string.format("Objects: %s / %s", 
-                Utils.formatNumber(processed), Utils.formatNumber(total))
-        end
-        
-        if optimizedLabel and optimizedLabel.Parent then
-            optimizedLabel.Text = string.format("Optimized: %s", Utils.formatNumber(optimized or 0))
-        end
-        
-        if speedLabel and speedLabel.Parent then
-            local elapsed = tick() - AntiLagSystem.stats.startTime
-            local speed = elapsed > 0 and processed / elapsed or 0
-            speedLabel.Text = string.format("Speed: %.0f obj/s", speed)
-        end
-        
-        if etaLabel and etaLabel.Parent then
-            if eta and eta > 0 then
-                etaLabel.Text = string.format("ETA: %s", Utils.formatTime(eta))
-            else
-                etaLabel.Text = "ETA: Almost done!"
-            end
-        end
-        
-        -- Completion handling
-        if progress >= 1 then
-            task.wait(1)
-            
-            -- Update final stats
-            if progressLabel and progressLabel.Parent then
-                progressLabel.Text = "✅ Optimization Complete!"
-                progressLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-            end
-            
-            task.wait(2)
-            
-            -- Cleanup
-            if perfConnection then perfConnection:Disconnect() end
-            
-            -- Exit animation
-            Utils.createTween(dialog, 0.6, {
-                Position = UDim2.fromScale(0.5, -0.5)
-            }, Enum.EasingStyle.Back, Enum.EasingDirection.In)
-            Utils.createTween(container, 0.4, {BackgroundTransparency = 1})
-            
-            task.wait(0.6)
-            if container and container.Parent then
-                container:Destroy()
-            end
-        end
-    end
-    
-    return updateProgress
-end
-
--- Utility functions for formatting
-function Utils.formatNumber(num)
-    return tostring(num):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
-end
-
-function Utils.formatTime(seconds)
-    if seconds < 60 then
-        return string.format("%.0fs", seconds)
-    else
-        local minutes = math.floor(seconds / 60)
-        local secs = seconds % 60
-        return string.format("%dm %.0fs", minutes, secs)
-    end
-end
-
--- Enhanced dialog creation with better theming
-function Utils.createDialog(parent, config)
-    config = config or {}
-    
-    -- Backdrop
-    local container = Utils.createInstance("Frame", parent, {
-        Name = "DialogContainer",
-        Size = UDim2.fromScale(1, 1),
-        Position = UDim2.fromScale(0, 0),
-        BackgroundColor3 = Color3.fromRGB(0, 0, 0),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        ZIndex = 200
-    })
-    
-    -- Main dialog
-    local dialog = Utils.createInstance("Frame", container, {
-        Name = "Dialog",
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Size = UDim2.fromScale(config.width or 0.4, config.height or 0.35),
-        Position = UDim2.fromScale(0.5, 1.5),
-        BackgroundColor3 = Color3.fromRGB(20, 25, 35),
-        BackgroundTransparency = 0.05,
-        BorderSizePixel = 0,
-        ZIndex = 201
-    })
-    
-    -- Styling
-    Utils.createInstance("UICorner", dialog, {CornerRadius = UDim.new(0, 16)})
-    Utils.createInstance("UIStroke", dialog, {
-        Thickness = 1.5,
-        Color = Color3.fromRGB(80, 120, 200),
-        Transparency = 0.4
-    })
-    
-    -- Header if title provided
-    local contentStartY = 0
-    if config.title then
-        local header = Utils.createInstance("Frame", dialog, {
-            Name = "Header",
-            Size = UDim2.new(1, 0, 0, 50),
-            Position = UDim2.fromScale(0, 0),
-            BackgroundColor3 = Color3.fromRGB(25, 30, 40),
-            BackgroundTransparency = 0.3,
-            BorderSizePixel = 0,
-            ZIndex = 202
-        })
-        
-        Utils.createInstance("UICorner", header, {CornerRadius = UDim.new(0, 16)})
-        
-        local title = Utils.createInstance("TextLabel", header, {
-            Name = "Title",
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Size = UDim2.fromScale(0.9, 0.8),
-            Position = UDim2.fromScale(0.5, 0.5),
-            BackgroundTransparency = 1,
-            Text = config.title,
-            TextColor3 = Color3.fromRGB(255, 255, 255),
-            TextScaled = true,
-            Font = Enum.Font.GothamBold,
-            ZIndex = 203
-        })
-        
-        contentStartY = 50
-    end
-    
-    -- Content area
-    local content = Utils.createInstance("Frame", dialog, {
-        Name = "Content",
-        Size = UDim2.new(1, 0, 1, -contentStartY),
-        Position = UDim2.fromOffset(0, contentStartY),
-        BackgroundTransparency = 1,
-        ZIndex = 203
-    })
-    
-    -- Entrance animation
-    Utils.createTween(container, 0.5, {BackgroundTransparency = 0.3}, Enum.EasingStyle.Quint)
-    Utils.createTween(dialog, 0.8, {Position = UDim2.fromScale(0.5, 0.5)}, Enum.EasingStyle.Back)
-    
-    return container, dialog, content
-end
-
--- Performance mode management
-function AntiLagSystem:enablePerformanceMode()
-    self.performanceMode = true
-    CONFIG.maxSelectionBoxes = math.min(CONFIG.maxSelectionBoxes, 15)
-    CONFIG.updateInterval = 1/15 -- Reduce update frequency
-    
-    -- Hide some visual elements
-    for _, selectionBox in ipairs(self.selectionBoxes) do
-        if selectionBox then
-            selectionBox.Visible = false
-        end
-    end
-    
-    print("Performance mode enabled - reduced visual effects for better FPS")
-end
-
-function AntiLagSystem:disablePerformanceMode()
-    self.performanceMode = false
-    CONFIG.maxSelectionBoxes = 30
-    CONFIG.updateInterval = 1/30
-    
-    -- Restore visual elements
-    for _, selectionBox in ipairs(self.selectionBoxes) do
-        if selectionBox then
-            selectionBox.Visible = true
-        end
-    end
-    
-    print("Performance mode disabled - full visual effects restored")
-end
-
--- Enhanced toggle button with status indicator
-function Utils.createToggleButton(parent)
-    -- Main button container
-    local buttonContainer = Utils.createInstance("Frame", parent, {
-        Name = "ButtonContainer",
-        AnchorPoint = Vector2.new(0, 0.5),
-        Size = UDim2.fromOffset(160, 55),
-        Position = UDim2.new(0, 20, 0.5, -50),
-        BackgroundTransparency = 1,
-        ZIndex = 49
-    })
-    
-    -- Shadow
-    local shadow = Utils.createInstance("Frame", buttonContainer, {
-        Name = "Shadow",
-        Size = UDim2.fromOffset(165, 60),
-        Position = UDim2.fromOffset(2, 2),
-        BackgroundColor3 = Color3.fromRGB(0, 0, 0),
-        BackgroundTransparency = 0.7,
-        BorderSizePixel = 0,
-        ZIndex = 48
-    })
-    Utils.createInstance("UICorner", shadow, {CornerRadius = UDim.new(0, 28)})
-    
-    -- Main button
-    local button = Utils.createInstance("TextButton", buttonContainer, {
-        Name = "AntiLagToggle",
-        Size = UDim2.fromOffset(160, 55),
-        Position = UDim2.fromOffset(0, 0),
-        BackgroundColor3 = Color3.fromRGB(35, 40, 50),
-        BorderSizePixel = 0,
-        Text = "",
-        ZIndex = 50
-    })
-    
-    Utils.createInstance("UICorner", button, {CornerRadius = UDim.new(0, 27)})
-    Utils.createInstance("UIStroke", button, {
-        Thickness = 2,
-        Color = Color3.fromRGB(80, 120, 200),
-        Transparency = 0.3
-    })
-    
-    -- Status indicator (small LED-like dot)
-    local statusIndicator = Utils.createInstance("Frame", button, {
-        Name = "StatusIndicator",
-        AnchorPoint = Vector2.new(1, 0),
-        Size = UDim2.fromOffset(8, 8),
-        Position = UDim2.new(1, -8, 0, 8),
-        BackgroundColor3 = Color3.fromRGB(255, 100, 100),
-        BorderSizePixel = 0,
-        ZIndex = 53
-    })
-    Utils.createInstance("UICorner", statusIndicator, {CornerRadius = UDim.new(0.5, 0)})
-    
-    AntiLagSystem.statusIndicator = statusIndicator
-    
-    -- Content layout
-    local content = Utils.createInstance("Frame", button, {
-        Size = UDim2.fromScale(1, 1),
-        BackgroundTransparency = 1,
-        ZIndex = 52
-    })
-    
-    Utils.createInstance("UIListLayout", content, {
-        FillDirection = Enum.FillDirection.Horizontal,
-        Padding = UDim.new(0, 8),
-        HorizontalAlignment = Enum.HorizontalAlignment.Center,
-        VerticalAlignment = Enum.VerticalAlignment.Center
-    })
-    
-    local icon = Utils.createInstance("TextLabel", content, {
-        Name = "Icon",
-        Size = UDim2.fromOffset(30, 30),
-        BackgroundTransparency = 1,
-        Text = "🚀",
-        TextColor3 = Color3.fromRGB(255, 255, 255),
-        TextScaled = true,
-        Font = Enum.Font.GothamBold,
-        ZIndex = 53
-    })
-    
-    local label = Utils.createInstance("TextLabel", content, {
-        Name = "Label",
-        Size = UDim2.fromOffset(95, 30),
-        BackgroundTransparency = 1,
-        Text = "Anti-Lag",
-        TextColor3 = Color3.fromRGB(255, 255, 255),
-        TextScaled = true,
-        Font = Enum.Font.GothamBold,
-        ZIndex = 53
-    })
-    
-    -- Floating animation
-    local floatOffset = 0
-    local floatConnection = RunService.Heartbeat:Connect(function(dt)
-        if buttonContainer and buttonContainer.Parent then
-            floatOffset = floatOffset + dt * 2
-            local offset = math.sin(floatOffset) * 2
-            buttonContainer.Position = UDim2.new(0, 20, 0.5, -50 + offset)
-        else
-            floatConnection:Disconnect()
-        end
-    end)
-    
-    -- State management
-    local function updateButtonState()
-        if not button or not button.Parent then return end
-        
-        if AntiLagSystem.isActive then
-            icon.Text = "✅"
-            label.Text = "Active"
-            button.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
-            statusIndicator.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
-            
-        elseif AntiLagSystem.isProcessing then
-            icon.Text = "⚡"
-            label.Text = "Working..."
-            button.BackgroundColor3 = Color3.fromRGB(60, 50, 20)
-            statusIndicator.BackgroundColor3 = Color3.fromRGB(255, 200, 100)
-            
-        else
-            icon.Text = "🚀"
-            label.Text = "Anti-Lag"
-            button.BackgroundColor3 = Color3.fromRGB(35, 40, 50)
-            statusIndicator.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
-        end
-        
-        -- Performance mode indicator
-        if AntiLagSystem.performanceMode then
-            label.Text = label.Text .. " 🔥"
-        end
-    end
-    
-    -- State monitoring
-    local stateConnection = RunService.Heartbeat:Connect(function()
-        if button and button.Parent then
-            updateButtonState()
-        else
-            if floatConnection then floatConnection:Disconnect() end
-            stateConnection:Disconnect()
-        end
-    end)
-    
-    -- Enhanced interactions
-    local originalSize = buttonContainer.Size
-    local isHovering = false
-    
-    button.MouseEnter:Connect(function()
-        isHovering = true
-        Utils.createTween(buttonContainer, 0.3, {
-            Size = UDim2.fromOffset(170, 60)
-        }, Enum.EasingStyle.Back)
-        Utils.createTween(button, 0.3, {
-            BackgroundTransparency = 0
-        }, Enum.EasingStyle.Quad)
-    end)
-    
-    button.MouseLeave:Connect(function()
-        isHovering = false
-        Utils.createTween(buttonContainer, 0.3, {
-            Size = originalSize
-        }, Enum.EasingStyle.Back)
-        Utils.createTween(button, 0.3, {
-            BackgroundTransparency = 0.1
-        }, Enum.EasingStyle.Quad)
-    end)
-    
-    button.MouseButton1Down:Connect(function()
-        Utils.createTween(buttonContainer, 0.1, {
-            Size = UDim2.fromOffset(155, 52)
-        }, Enum.EasingStyle.Quad)
-    end)
-    
-    button.MouseButton1Up:Connect(function()
-        local targetSize = isHovering and UDim2.fromOffset(170, 60) or originalSize
-        Utils.createTween(buttonContainer, 0.15, {
-            Size = targetSize
-        }, Enum.EasingStyle.Back)
-    end)
-    
-    -- Click handler
-    button.MouseButton1Click:Connect(function()
-        AntiLagSystem:handleButtonClick()
-    end)
-    
-    AntiLagSystem.toggleButton = button
-    return button
-end
-
--- Warning dialog with modern design
-function Utils.createWarningDialog(parent, onAccept, onDecline)
-    local container, dialog, content = Utils.createDialog(parent, {
-        width = 0.5, 
-        height = 0.45,
-        title = "⚠️ Workspace Optimization Warning"
-    })
-    
-    -- Warning content
-    local warningText = Utils.createInstance("TextLabel", content, {
-        Name = "WarningText",
-        AnchorPoint = Vector2.new(0.5, 0),
-        Size = UDim2.fromScale(0.9, 0.4),
-        Position = UDim2.fromScale(0.5, 0.05),
-        BackgroundTransparency = 1,
-        Text = "This optimization will permanently modify workspace objects:\n\n• Remove visual effects and textures\n• Simplify geometry and materials\n• Disable unnecessary physics\n• Cannot be undone",
-        TextColor3 = Color3.fromRGB(240, 240, 240),
-        TextWrapped = true,
-        TextScaled = true,
-        Font = Enum.Font.Gotham,
-        TextYAlignment = Enum.TextYAlignment.Top,
-        ZIndex = 204
-    })
-    
-    -- Performance impact info
-    local impactFrame = Utils.createInstance("Frame", content, {
-        Name = "ImpactFrame",
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Size = UDim2.fromScale(0.9, 0.25),
-        Position = UDim2.fromScale(0.5, 0.6),
-        BackgroundColor3 = Color3.fromRGB(40, 45, 55),
-        BackgroundTransparency = 0.3,
-        BorderSizePixel = 0,
-        ZIndex = 204
-    })
-    
-    Utils.createInstance("UICorner", impactFrame, {CornerRadius = UDim.new(0, 8)})
-    Utils.createInstance("UIPadding", impactFrame, {
-        PaddingTop = UDim.new(0, 10),
-        PaddingBottom = UDim.new(0, 10),
-        PaddingLeft = UDim.new(0, 15),
-        PaddingRight = UDim.new(0, 15)
-    })
-    
-    local impactText = Utils.createInstance("TextLabel", impactFrame, {
-        Size = UDim2.fromScale(1, 1),
-        BackgroundTransparency = 1,
-        Text = "Expected Performance Improvements:\n📈 +20-50% FPS boost  💾 -30-60% memory usage  ⚡ Reduced lag spikes",
-        TextColor3 = Color3.fromRGB(150, 220, 150),
-        TextWrapped = true,
-        TextScaled = true,
-        Font = Enum.Font.Gotham,
-        ZIndex = 205
-    })
-    
-    -- Button container
-    local buttonContainer = Utils.createInstance("Frame", content, {
-        Name = "ButtonContainer",
-        AnchorPoint = Vector2.new(0.5, 1),
-        Size = UDim2.fromScale(0.8, 0.15),
-        Position = UDim2.fromScale(0.5, 0.95),
-        BackgroundTransparency = 1,
-        ZIndex = 204
-    })
-    
-    Utils.createInstance("UIListLayout", buttonContainer, {
-        FillDirection = Enum.FillDirection.Horizontal,
-        Padding = UDim.new(0, 20),
-        HorizontalAlignment = Enum.HorizontalAlignment.Center,
-        VerticalAlignment = Enum.VerticalAlignment.Center
-    })
-    
-    -- Enhanced button creation
-    local function createActionButton(text, color, callback, isPrimary)
-        local btn = Utils.createInstance("TextButton", buttonContainer, {
-            Name = text,
-            Size = UDim2.fromScale(0.35, 1),
-            BackgroundColor3 = color,
-            BackgroundTransparency = isPrimary and 0 or 0.2,
-            Text = text,
-            TextColor3 = Color3.fromRGB(255, 255, 255),
-            Font = Enum.Font.GothamBold,
-            TextScaled = true,
-            ZIndex = 205
-        })
-        
-        Utils.createInstance("UICorner", btn, {CornerRadius = UDim.new(0, 8)})
-        
-        if isPrimary then
-            Utils.createInstance("UIStroke", btn, {
-                Thickness = 2,
-                Color = Color3.new(color.R * 1.3, color.G * 1.3, color.B * 1.3),
-                Transparency = 0.3
-            })
-        end
-        
-        -- Button interactions
-        btn.MouseEnter:Connect(function()
-            Utils.createTween(btn, 0.2, {
-                Size = UDim2.fromScale(0.38, 1.05),
-                BackgroundTransparency = (isPrimary and 0 or 0.2) * 0.8
-            }, Enum.EasingStyle.Quad)
-        end)
-        
-        btn.MouseLeave:Connect(function()
-            Utils.createTween(btn, 0.2, {
-                Size = UDim2.fromScale(0.35, 1),
-                BackgroundTransparency = isPrimary and 0 or 0.2
-            }, Enum.EasingStyle.Quad)
-        end)
-        
-        btn.MouseButton1Click:Connect(function()
-            -- Close animation
-            Utils.createTween(dialog, 0.4, {
-                Position = UDim2.fromScale(0.5, -0.5)
-            }, Enum.EasingStyle.Back, Enum.EasingDirection.In)
-            Utils.createTween(container, 0.3, {BackgroundTransparency = 1})
-            
-            task.wait(0.4)
-            if container and container.Parent then
-                container:Destroy()
-            end
-            
-            if callback then callback() end
-        end)
-        
-        return btn
-    end
-    
-    createActionButton("🚀 Optimize Now", Color3.fromRGB(50, 150, 250), onAccept, true)
-    createActionButton("❌ Cancel", Color3.fromRGB(120, 120, 130), onDecline, false)
-    
-    return container
-end
-
--- Status dialog for active system
-function Utils.createStatusDialog(parent)
-    local container, dialog, content = Utils.createDialog(parent, {
-        width = 0.4, 
-        height = 0.35,
-        title = "✅ System Status"
-    })
-    
-    -- Status info
-    local statusInfo = Utils.createInstance("Frame", content, {
-        Name = "StatusInfo",
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Size = UDim2.fromScale(0.9, 0.6),
-        Position = UDim2.fromScale(0.5, 0.4),
-        BackgroundTransparency = 1,
-        ZIndex = 204
-    })
-    
-    Utils.createInstance("UIListLayout", statusInfo, {
-        FillDirection = Enum.FillDirection.Vertical,
-        Padding = UDim.new(0, 10),
-        HorizontalAlignment = Enum.HorizontalAlignment.Center,
-        VerticalAlignment = Enum.VerticalAlignment.Center
-    })
-    
-    -- Status message
-    local statusMessage = Utils.createInstance("TextLabel", statusInfo, {
-        Size = UDim2.new(1, 0, 0, 40),
-        BackgroundTransparency = 1,
-        Text = "🎉 Optimization Active!",
-        TextColor3 = Color3.fromRGB(100, 255, 100),
-        TextScaled = true,
-        Font = Enum.Font.GothamBold,
-        ZIndex = 205
-    })
-    
-    -- Stats display
-    local statsText = Utils.createInstance("TextLabel", statusInfo, {
-        Size = UDim2.new(1, 0, 0, 60),
-        BackgroundTransparency = 1,
-        Text = string.format("Objects Optimized: %s\nCurrent FPS: %d\nMemory Usage: %.1f MB", 
-            Utils.formatNumber(AntiLagSystem.stats.optimizedObjects),
-            AntiLagSystem.stats.currentFPS,
-            collectgarbage("count") / 1024
-        ),
-        TextColor3 = Color3.fromRGB(200, 200, 200),
-        TextScaled = true,
-        Font = Enum.Font.Gotham,
-        ZIndex = 205
-    })
-    
-    -- Performance mode indicator
-    if AntiLagSystem.performanceMode then
-        local perfModeLabel = Utils.createInstance("TextLabel", statusInfo, {
-            Size = UDim2.new(1, 0, 0, 30),
-            BackgroundTransparency = 1,
-            Text = "🔥 Performance Mode: Enabled",
-            TextColor3 = Color3.fromRGB(255, 150, 100),
-            TextScaled = true,
-            Font = Enum.Font.Gotham,
-            ZIndex = 205
-        })
-    end
-    
-    -- Controls info
-    local controlsInfo = Utils.createInstance("TextLabel", content, {
-        AnchorPoint = Vector2.new(0.5, 1),
-        Size = UDim2.fromScale(0.9, 0.2),
-        Position = UDim2.fromScale(0.5, 0.95),
-        BackgroundTransparency = 1,
-        Text = "Press Ctrl+L for quick toggle\nClick anywhere to close",
-        TextColor3 = Color3.fromRGB(150, 150, 150),
-        TextScaled = true,
-        Font = Enum.Font.Gotham,
-        ZIndex = 204
-    })
-    
-    -- Auto-close timer with countdown
-    local closeTime = 5
-    local countdownConnection
-    countdownConnection = RunService.Heartbeat:Connect(function(dt)
-        if closeTime > 0 and controlsInfo and controlsInfo.Parent then
-            closeTime = closeTime - dt
-            controlsInfo.Text = string.format("Auto-closing in %.1fs\nClick anywhere to close", closeTime)
-            
-            if closeTime <= 0 then
-                countdownConnection:Disconnect()
-                -- Close dialog
-                if container and container.Parent then
-                    Utils.createTween(dialog, 0.4, {
-                        Position = UDim2.fromScale(0.5, -0.5)
-                    }, Enum.EasingStyle.Quad)
-                    Utils.createTween(container, 0.3, {BackgroundTransparency = 1})
-                    task.wait(0.4)
-                    container:Destroy()
-                end
-            end
-        else
-            countdownConnection:Disconnect()
-        end
-    end)
-    
-    -- Click to close
-    local closeButton = Utils.createInstance("TextButton", content, {
-        Size = UDim2.fromScale(1, 1),
-        BackgroundTransparency = 1,
-        Text = "",
-        ZIndex = 203
-    })
-    
-    closeButton.MouseButton1Click:Connect(function()
-        if countdownConnection then countdownConnection:Disconnect() end
-        Utils.createTween(dialog, 0.3, {
-            Position = UDim2.fromScale(0.5, -0.5)
-        }, Enum.EasingStyle.Quad)
-        Utils.createTween(container, 0.2, {BackgroundTransparency = 1})
-        task.wait(0.3)
-        if container and container.Parent then
-            container:Destroy()
-        end
-    end)
-    
-    return container
-end
-
--- Object management system
-function AntiLagSystem:registerObject(object, shouldIgnore)
-    if not object then return end
-    
-    if shouldIgnore then
-        self.ignoredObjects[object] = true
-    else
-        self.ignoredObjects[object] = nil
-    end
-end
-
-function AntiLagSystem:registerCharacter(character)
-    if not character then return end
-    
-    -- Register all character parts as ignored
-    for _, descendant in ipairs(character:GetDescendants()) do
-        self:registerObject(descendant, true)
-    end
-    
-    -- Handle new descendants
-    local connections = {}
-    connections.added = character.DescendantAdded:Connect(function(obj)
-        self:registerObject(obj, true)
-    end)
-    
-    connections.removing = character.DescendantRemoving:Connect(function(obj)
-        self:registerObject(obj, false)
-    end)
-    
-    -- Store connections for cleanup
-    self.connections[character] = connections
-    
-    -- Cleanup when character is removed
-    character.AncestryChanged:Connect(function()
-        if not character.Parent and self.connections[character] then
-            for _, conn in pairs(self.connections[character]) do
-                if conn then conn:Disconnect() end
-            end
-            self.connections[character] = nil
-        end
-    end)
-end
-
--- Main button click handler
-function AntiLagSystem:handleButtonClick()
-    if self.isProcessing then
-        return -- Prevent actions during processing
-    end
-    
-    if self.isActive then
-        Utils.createStatusDialog(self.gui)
-    else
-        Utils.createWarningDialog(self.gui, 
-            function() -- onAccept
-                self:startOptimization()
-            end,
-            function() -- onDecline
-                -- Dialog closes automatically
-            end
-        )
-    end
-end
-
--- Enhanced optimization process
-function AntiLagSystem:startOptimization()
-    if self.isActive or self.isProcessing then return end
-    
-    -- Show progress dialog
-    local progressCallback = Utils.createProgressDialog(self.gui)
-    
-    -- Start optimization process
-    task.spawn(function()
-        Utils.processWorkspace(progressCallback, {
-            aggressive = self.performanceMode
-        })
-        
-        -- Start selection box updates after completion
-        if self.isActive then
-            if self.connections.selectionUpdate then
-                self.connections.selectionUpdate:Disconnect()
-            end
-            
-            local lastUpdateTime = 0
-            self.connections.selectionUpdate = RunService.Heartbeat:Connect(function()
-                local currentTime = tick()
-                if currentTime - lastUpdateTime >= CONFIG.updateInterval then
-                    Utils.updateSelectionBoxes()
-                    lastUpdateTime = currentTime
-                end
-            end)
-        end
-    end)
-end
-
--- Pause/Resume functionality
-function AntiLagSystem:pauseOptimization()
-    if not self.isProcessing then return end
-    self.isPaused = true
-    print("Optimization paused")
-end
-
-function AntiLagSystem:resumeOptimization()
-    if not self.isProcessing then return end
-    self.isPaused = false
-    print("Optimization resumed")
-end
-
--- Enhanced player management
-function AntiLagSystem:setupPlayerManagement()
-    -- Handle current character
-    if player.Character then
-        self:registerCharacter(player.Character)
-    end
-    
-    -- Handle character spawning
-    self.connections.characterAdded = player.CharacterAdded:Connect(function(character)
-        self:registerCharacter(character)
-    end)
-    
-    -- Handle all existing players
-    for _, otherPlayer in ipairs(Players:GetPlayers()) do
-        if otherPlayer ~= player then
-            if otherPlayer.Character then
-                self:registerCharacter(otherPlayer.Character)
-            end
-            
-            -- Connect to future character spawns
-            local charConnection = otherPlayer.CharacterAdded:Connect(function(character)
-                self:registerCharacter(character)
-            end)
-            
-            self.connections["player_" .. otherPlayer.UserId] = charConnection
-        end
-    end
-    
-    -- Handle new players joining
-    self.connections.playerAdded = Players.PlayerAdded:Connect(function(newPlayer)
-        if newPlayer.Character then
-            self:registerCharacter(newPlayer.Character)
-        end
-        
-        local charConnection = newPlayer.CharacterAdded:Connect(function(character)
-            self:registerCharacter(character)
-        end)
-        
-        self.connections["player_" .. newPlayer.UserId] = charConnection
-    end)
-    
-    -- Handle players leaving
-    self.connections.playerRemoving = Players.PlayerRemoving:Connect(function(leavingPlayer)
-        -- Clean up connections
-        local connKey = "player_" .. leavingPlayer.UserId
-        if self.connections[connKey] then
-            self.connections[connKey]:Disconnect()
-            self.connections[connKey] = nil
-        end
-        
-        -- Clean up character references
-        if leavingPlayer.Character and self.connections[leavingPlayer.Character] then
-            for _, conn in pairs(self.connections[leavingPlayer.Character]) do
-                if conn then conn:Disconnect() end
-            end
-            self.connections[leavingPlayer.Character] = nil
-        end
-        
-        -- Remove from ignored objects
-        if leavingPlayer.Character then
-            for _, descendant in ipairs(leavingPlayer.Character:GetDescendants()) do
-                self:registerObject(descendant, false)
-            end
-        end
-    end)
-end
-
--- System initialization
-function AntiLagSystem:initialize()
-    -- Wait for PlayerGui
-    local playerGui = player:WaitForChild("PlayerGui", 10)
-    if not playerGui then
-        warn("AntiLagSystem: PlayerGui not found")
-        return false
-    end
-    
-    -- Create main GUI
-    self.gui = Utils.createInstance("ScreenGui", playerGui, {
-        Name = "AntiLagSystemGUI",
-        ResetOnSpawn = false,
-        IgnoreGuiInset = true,
-        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-        DisplayOrder = 100
-    })
-    
-    if not self.gui then
-        warn("AntiLagSystem: Failed to create main GUI")
-        return false
-    end
-    
-    -- Initialize components
-    Utils.createSelectionBoxes()
-    Utils.createToggleButton(self.gui)
-    
-    -- Setup player management
-    self:setupPlayerManagement()
-    
-    -- Start performance monitoring
-    self.connections.performanceMonitor = RunService.Heartbeat:Connect(function()
-        Utils.updatePerformanceStats()
-    end)
-    
-    print("AntiLagSystem: Successfully initialized")
-    return true
-end
-
--- Enhanced cleanup system
-function AntiLagSystem:cleanup()
-    print("AntiLagSystem: Cleaning up...")
-    
-    -- Stop processing
-    self.isProcessing = false
-    self.isActive = false
-    
-    -- Clean up all tweens
-    for _, tween in ipairs(self.tweens) do
-        if tween then
-            tween:Cancel()
-        end
-    end
-    self.tweens = {}
-    
-    -- Disconnect all connections
-    for key, connection in pairs(self.connections) do
-        if type(connection) == "table" then
-            -- Handle character connections
-            for _, conn in pairs(connection) do
-                if conn and conn.Connected then
-                    conn:Disconnect()
-                end
-            end
-        elseif connection and connection.Connected then
-            connection:Disconnect()
-        end
-    end
-    self.connections = {}
-    
-    -- Clean up selection boxes
-    for _, selectionBox in ipairs(self.selectionBoxes) do
-        if selectionBox then
-            selectionBox:Destroy()
-        end
-    end
-    self.selectionBoxes = {}
-    
-    -- Clean up GUI
-    if self.gui then
-        self.gui:Destroy()
-        self.gui = nil
-    end
-    
-    -- Clear references
-    self.ignoredObjects = {}
-    self.toggleButton = nil
-    self.statusIndicator = nil
-    
-    -- Reset stats
-    self.stats = {
-        optimizedObjects = 0,
-        savedMemory = 0,
-        currentFPS = 60,
-        startTime = 0,
-        lastFrameTime = tick()
-    }
-    
-    print("AntiLagSystem: Cleanup complete")
-end
-
--- Enhanced keyboard shortcuts
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    
-    -- Main toggle: Ctrl+L
-    if input.KeyCode == Enum.KeyCode.L and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-        AntiLagSystem:handleButtonClick()
-    end
-    
-    -- Performance mode toggle: Ctrl+P
-    if input.KeyCode == Enum.KeyCode.P and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-        if AntiLagSystem.performanceMode then
-            AntiLagSystem:disablePerformanceMode()
-        else
-            AntiLagSystem:enablePerformanceMode()
-        end
-    end
-    
-    -- Pause/Resume: Ctrl+Space (only during processing)
-    if input.KeyCode == Enum.KeyCode.Space and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-        if AntiLagSystem.isProcessing then
-            if AntiLagSystem.isPaused then
-                AntiLagSystem:resumeOptimization()
-            else
-                AntiLagSystem:pauseOptimization()
-            end
-        end
-    end
+-- Initialize player tracking with error handling
+pcall(function()
+	-- Track all existing players
+	for _, plr in ipairs(Players:GetPlayers()) do
+		trackPlayer(plr)
+	end
 end)
 
--- Handle player leaving
-Players.PlayerRemoving:Connect(function(leavingPlayer)
-    if leavingPlayer == player then
-        AntiLagSystem:cleanup()
-    end
+-- Listen for new players joining with error handling
+pcall(function()
+	Players.PlayerAdded:Connect(function(plr)
+		trackPlayer(plr)
+	end)
 end)
 
--- Auto-save system state (optional)
-local function saveSystemState()
-    if not AntiLagSystem.gui then return end
-    
-    -- Save preferences to a StringValue (persists across sessions)
-    local saveData = {
-        performanceMode = AntiLagSystem.performanceMode,
-        isActive = AntiLagSystem.isActive,
-        stats = AntiLagSystem.stats
-    }
-    
-    -- This would require a server-side component to truly persist
-    -- For now, it's just a placeholder for future enhancement
+-- Handle players leaving with error handling
+pcall(function()
+	Players.PlayerRemoving:Connect(function(plr)
+		pcall(function()
+			if plr.Character then
+				removeCharacter(plr.Character)
+			end
+		end)
+	end)
+end)
+
+-- Initialize optimization when LocalPlayer spawns with enhanced error handling
+if LocalPlayer then
+	pcall(function()
+		LocalPlayer.CharacterAdded:Connect(function(char)
+			local success, result = pcall(function()
+				addCharacter(char)
+				task.wait(2)
+				init() -- Start optimization process after LocalPlayer spawns
+			end)
+			
+			if not success then
+				warn("Failed during LocalPlayer character initialization: " .. tostring(result))
+			end
+		end)
+	end)
+
+	pcall(function()
+		LocalPlayer.CharacterRemoving:Connect(function(char)
+			removeCharacter(char)
+		end)
+	end)
+else
+	warn("LocalPlayer is not available - script may not function properly")
 end
-
--- Initialize the system with proper error handling
-task.spawn(function()
-    task.wait(2) -- Wait for everything to load
-    
-    local success, error = pcall(function()
-        if not AntiLagSystem:initialize() then
-            warn("AntiLagSystem: Initialization failed")
-        end
-    end)
-    
-    if not success then
-        warn("AntiLagSystem: Critical error during initialization:", error)
-    end
-end)
-
--- Export the system for external access (if needed)
-_G.AntiLagSystem = AntiLagSystem
-
-print("AntiLagSystem: Script loaded successfully")
-print("Controls:")
-print("• Ctrl+L: Toggle Anti-Lag system")
-print("• Ctrl+P: Toggle Performance Mode") 
-print("• Ctrl+Space: Pause/Resume optimization (during processing)")
