@@ -60,7 +60,7 @@ local Dropdown = Tab:CreateDropdown({
 	Options = {"None","Heads", "Tails"},
 	CurrentOption = {"None"},
 	MultipleOptions = false,
-	Flag = "Dropdown1",
+	Flag = "ROLL",
 	Callback = function(Options)
 		currentSpinOption = Options[1]
 		if currentSpinOption == "None" then
