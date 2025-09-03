@@ -1,563 +1,160 @@
---[=[
- d888b  db    db d888888b      .d888b.      db      db    db  .d8b.  
-88' Y8b 88    88   `88'        VP  `8D      88      88    88 d8' `8b 
-88      88    88    88            odD'      88      88    88 88ooo88 
-88  ooo 88    88    88          .88'        88      88    88 88~~~88 
-88. ~8~ 88b  d88   .88.        j88.         88booo. 88b  d88 88   88    @uniquadev
- Y888P  ~Y8888P' Y888888P      888888D      Y88888P ~Y8888P' YP   YP  CONVERTER 
-]=]
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
+local Window = Rayfield:CreateWindow({
+	Name = "Hack Vox Sea v 1.0",
+	Icon = 0, -- Icon in Topbar. Can use Lucide Icons (string) or Roblox Image (number). 0 to use no icon (default).
+	LoadingTitle = "Vox Sea",
+	LoadingSubtitle = "by no one",
+	ShowText = "Vox Sea", -- for mobile users to unhide rayfield, change if you'd like
+	Theme = "Light", -- Check https://docs.sirius.menu/rayfield/configuration/themes
+
+	ToggleUIKeybind = "K", -- The keybind to toggle the UI visibility (string like "K" or Enum.KeyCode)
+
+	DisableRayfieldPrompts = false,
+	DisableBuildWarnings = false, -- Prevents Rayfield from warning when the script has a version mismatch with the interface
+
+	ConfigurationSaving = {
+		Enabled = true,
+		FolderName = nil, -- Create a custom folder for your hub/game
+		FileName = "Big Hub"
+	},
+
+	Discord = {
+		Enabled = false, -- Prompt the user to join your Discord server if their executor supports it
+		Invite = "noinvitelink", -- The Discord invite code, do not include discord.gg/. E.g. discord.gg/ ABCD would be ABCD
+		RememberJoins = true -- Set this to false to make them join the discord every time they load it up
+	},
+
+	KeySystem = false, -- Set this to true to use our key system
+	KeySettings = {
+		Title = "Untitled",
+		Subtitle = "Key System",
+		Note = "No method of obtaining the key is provided", -- Use this to tell the user how to get a key
+		FileName = "Key", -- It is recommended to use something unique as other scripts using Rayfield may overwrite your key file
+		SaveKey = true, -- The user's key will be saved, but if you change the key, they will be unable to use your script
+		GrabKeyFromSite = false, -- If this is true, set Key below to the RAW site you would like Rayfield to get the key from
+		Key = {"Hello"} -- List of keys that will be accepted by the system, can be RAW file links (pastebin, github etc) or simple strings ("hello","key22")
+	}
+})
+
+
+local Tab = Window:CreateTab("Main", "rewind")
+local Section = Tab:CreateSection("Rolling")
 
 local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-local hasINIT = false
-local TS = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
--- Enhanced tween function with comprehensive error handling
-local function tween(o, p, t, s, d)
-	if not o then
-		warn("Tween error: Object parameter is nil or invalid")
-		return nil
-	end
-	if not p or type(p) ~= "table" then
-		warn("Tween error: Properties parameter must be a valid table")
-		return nil
-	end
+local player = Players.LocalPlayer
+local autoSpinEnabled = false
+local autoRebirthEnabled = false
+local spinConnection = nil
+local rebirthConnection = nil
+local currentSpinOption = "None"
 
-	local success, result = pcall(function()
-		local tweenInfo = TweenInfo.new(
-			t or 0.5, 
-			s or Enum.EasingStyle.Quad, 
-			d or Enum.EasingDirection.Out
-		)
-		local tweenObj = TS:Create(o, tweenInfo, p)
-		tweenObj:Play()
-		return tweenObj
-	end)
+local spinService = ReplicatedStorage:WaitForChild("src"):WaitForChild("Modules"):WaitForChild("KnitClient"):WaitForChild("Services"):WaitForChild("SpinService"):WaitForChild("RE"):WaitForChild("Spin")
+local rebirthService = ReplicatedStorage:WaitForChild("src"):WaitForChild("Modules"):WaitForChild("KnitClient"):WaitForChild("Services"):WaitForChild("RebirthService"):WaitForChild("RE"):WaitForChild("Rebirth")
 
-	if not success then
-		warn("Tween creation failed: " .. tostring(result))
-		return nil
-	end
-
-	return result
-end
-
-local whitelist = {}
-
--- Function to determine if an instance should be skipped during optimization
-function skippable(inst:Instance)
-	if not inst or not inst.Parent then
-		return true -- Skip invalid or parentless instances
-	end
-
-	-- Check whitelist protection (player characters, etc.)
-	if whitelist then
-		local success, result = pcall(function()
-			for _, v in pairs(whitelist) do
-				if v and typeof(v) == "Instance" and v.Parent then
-					if inst:IsDescendantOf(v) then
-						return true
-					end
-				end
+local Dropdown = Tab:CreateDropdown({
+	Name = "ROLL",
+	Options = {"None","Heads", "Tails"},
+	CurrentOption = {"None"},
+	MultipleOptions = false,
+	Flag = "Dropdown1",
+	Callback = function(Options)
+		currentSpinOption = Options[1]
+		if currentSpinOption == "None" then
+			autoSpinEnabled = false
+			if spinConnection then
+				spinConnection:Disconnect()
+				spinConnection = nil
 			end
-			return false
-		end)
-
-		if success and result then
-			return true
-		end
-	end
-
-	-- Protect critical game services
-	local protectedServices = {
-		["Players"] = true,
-		["ReplicatedFirst"] = true,
-		["ReplicatedStorage"] = true,
-		["StarterPlayer"] = true
-	}
-	if protectedServices[inst.Name] then
-		return true
-	end
-
-	-- Protect character movement and physics components
-	local protectedClasses = {
-		"Humanoid", "BodyMover", "BodyGyro", "BodyVelocity", 
-		"BodyForce", "BodyThrust", "BodyPosition", "BodyAngularVelocity", "Constraint"
-	}
-
-	local success, isProtected = pcall(function()
-		for _, className in ipairs(protectedClasses) do
-			if inst:IsA(className) then
-				return true
+		else
+			autoSpinEnabled = true
+			if spinConnection then
+				spinConnection:Disconnect()
 			end
-		end
-		return false
-	end)
-
-	if success and isProtected then
-		return true
-	end
-
-	return false
-end
-
--- Optimization settings for different object types
-local notIgnore = {
-	-- 3D geometry parts - optimize materials and shadows
-	["BasePart"] = {
-		Material = Enum.Material.SmoothPlastic,
-		Reflectance = 0,
-		CastShadow = false
-	},
-	["Part"] = {
-		Material = Enum.Material.SmoothPlastic,
-		Reflectance = 0,
-		CastShadow = false
-	},
-	["MeshPart"] = {
-		Material = Enum.Material.SmoothPlastic,
-		Reflectance = 0,
-		CastShadow = false,
-		TextureID = ""
-	},
-	["TrussPart"] = {
-		Material = Enum.Material.SmoothPlastic,
-		Reflectance = 0,
-		CastShadow = false
-	},
-	["WedgePart"] = {
-		Material = Enum.Material.SmoothPlastic,
-		Reflectance = 0,
-		CastShadow = false
-	},
-	["CornerWedgePart"] = {
-		Material = Enum.Material.SmoothPlastic,
-		Reflectance = 0,
-		CastShadow = false
-	},
-	["UnionOperation"] = {
-		Material = Enum.Material.SmoothPlastic,
-		Reflectance = 0,
-		CastShadow = false
-	},
-	
-
-	-- Disable visual effects for performance
-	["Smoke"] = { Enabled = false },
-	["Fire"] = { Enabled = false },
-	["Trail"] = { Enabled = false },
-	["Beam"] = { Enabled = false },
-	["ParticleEmitter"] = { Enabled = false, Rate = 0 },
-	["Explosion"] = { Visible = false },
-
-	-- Disable lighting effects
-	["PointLight"] = { Enabled = false, Brightness = 0 },
-	["SpotLight"]  = { Enabled = false, Brightness = 0 },
-	["SurfaceLight"] = { Enabled = false, Brightness = 0 },
-	["Highlight"] = { Enabled = false, FillTransparency = 1, OutlineTransparency = 1 },
-
-	-- Hide textures and decals
-	["Texture"] = { Transparency = 1 },
-	["Decal"] = { Transparency = 1 },
-
-	-- Minimize atmospheric effects
-	["Sky"] = {
-		CelestialBodiesShown = false,
-		EnvironmentDiffuseScale = 0,
-		EnvironmentSpecularScale = 0,
-		SunAngularSize = 0
-	},
-	["Atmosphere"] = { Density = 0, Offset = 0 },
-	["Clouds"] = { Cover = 0 },
-
-	-- Disable post-processing effects
-	["BloomEffect"] = { Enabled = false, Size = 0, Intensity = 0 },
-	["BlurEffect"] = { Enabled = false, Size = 0 },
-	["ColorCorrectionEffect"] = { Enabled = false, Brightness = 0, Contrast = 0, Saturation = 0 },
-	["SunRaysEffect"] = { Enabled = false, Intensity = 0, Spread = 0 }
-}
-
--- Main optimization function with enhanced error handling and progress tracking
-local function progress(args, isINIT)
-	if not args or #args == 0 then
-		warn("Progress function called with no valid containers")
-		return
-	end
-
-	local totalProcessed = 0
-	local startTime = tick()
-
-	for i, inst in ipairs(args) do
-		if inst and inst.Parent and not skippable(inst) and notIgnore[inst.ClassName] then
-			local instanceSuccess = pcall(function()
-				for attr, val in pairs(notIgnore[inst.ClassName]) do
-					-- Check if property exists before setting
-					local hasProperty = pcall(function()
-						return inst[attr] ~= nil
-					end)
-
-					if hasProperty then
-						local setSuccess, setError = pcall(function()
-							inst[attr] = val
-						end)
-
-						if setSuccess then
-							totalProcessed += 1
-						elseif not string.find(tostring(setError), "locked")
-							and not string.find(tostring(setError), "readonly") then
-							warn(`Failed to set {attr} on {inst.ClassName}: {tostring(setError)}`)
-						end
-					end
-				end
-			end)
-
-			-- silently skip if setting properties failed
-			if not instanceSuccess then
-				-- optional: log once if needed
-			end
-		end
-
-		-- yield every 100 instances to avoid timeout
-		if i % 100 == 0 then
-			task.wait()
-		end
-	end
-
-	local endTime = tick()
-	if isINIT then
-		print(string.format("Total optimization completed: %d objects in %.2f seconds", totalProcessed, endTime - startTime))
-	end
-end
-
-
--- Simple completion notification function
-local function completion()
-	print("Optimization completed successfully.")
-	task.wait(2)
-end
-
--- Define the optimization process steps
-local processes = {
-	{ func = progress, args =  game.Workspace , name = "Optimizing Workspace" },
-	{ func = progress, args =  game.Lighting , name = "Optimizing Lighting" },
-	{ func = completion, args = nil, name = "Binding Dynamic Optimization" }
-}
-
--- Main initialization function with GUI creation and process execution
-function init()
-	hasINIT = true
-	-- Validate LocalPlayer before proceeding
-	if not LocalPlayer or not LocalPlayer.Parent then
-		warn("LocalPlayer not available for GUI creation")
-		return
-	end
-
-	local playerGui = LocalPlayer:WaitForChild("PlayerGui", 10)
-	if not playerGui then
-		warn("PlayerGui not found - cannot create optimization GUI")
-		return
-	end
-
-	-- Create GUI instances with error handling
-	local G2L = {};
-
-	-- Main ScreenGui container
-	local success, screenGui = pcall(function()
-		local gui = Instance.new("ScreenGui", playerGui)
-		gui.IgnoreGuiInset = true
-		gui.ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets
-		gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-		gui.ResetOnSpawn = false
-		return gui
-	end)
-
-	if not success then
-		warn("Failed to create ScreenGui")
-		return
-	end
-	G2L["1"] = screenGui
-
-	-- Background frame
-	G2L["2"] = Instance.new("Frame", G2L["1"]);
-	G2L["2"]["BorderSizePixel"] = 0;
-	G2L["2"]["BackgroundColor3"] = Color3.fromRGB(0, 0, 0);
-	G2L["2"]["AnchorPoint"] = Vector2.new(0.5, 0.5);
-	G2L["2"]["Size"] = UDim2.new(0.35998, 0, 0.57803, 0);
-	G2L["2"]["Position"] = UDim2.new(0.5, 0, 0.49913, 0);
-	G2L["2"]["BorderColor3"] = Color3.fromRGB(0, 0, 0);
-	G2L["2"]["Name"] = [[BG]];
-	G2L["2"]["BackgroundTransparency"] = 1;
-
-	-- Aspect ratio constraint
-	G2L["3"] = Instance.new("UIAspectRatioConstraint", G2L["2"]);
-	G2L["3"]["DominantAxis"] = Enum.DominantAxis.Height;
-	G2L["3"]["AspectRatio"] = 1.75;
-
-	-- Glow background image
-	G2L["4"] = Instance.new("ImageLabel", G2L["2"]);
-	G2L["4"]["BorderSizePixel"] = 0;
-	G2L["4"]["BackgroundColor3"] = Color3.fromRGB(255, 255, 255);
-	G2L["4"]["ImageTransparency"] = 1;
-	G2L["4"]["ImageColor3"] = Color3.fromRGB(0, 61, 255);
-	G2L["4"]["AnchorPoint"] = Vector2.new(0.5, 0.5);
-	G2L["4"]["Image"] = [[rbxassetid://64212796]];
-	G2L["4"]["Size"] = UDim2.new(1, 0, 1, 0);
-	G2L["4"]["BorderColor3"] = Color3.fromRGB(0, 0, 0);
-	G2L["4"]["BackgroundTransparency"] = 1;
-	G2L["4"]["Rotation"] = 180;
-	G2L["4"]["Name"] = [[GlowBG]];
-	G2L["4"]["Position"] = UDim2.new(0.5, 0, 0.5, 0);
-
-	-- Loading progress bar container
-	G2L["5"] = Instance.new("Frame", G2L["2"]);
-	G2L["5"]["BorderSizePixel"] = 0;
-	G2L["5"]["BackgroundColor3"] = Color3.fromRGB(255, 255, 255);
-	G2L["5"]["AnchorPoint"] = Vector2.new(0.5, 0.5);
-	G2L["5"]["Size"] = UDim2.new(0.75, 0, 0.025, 0);
-	G2L["5"]["Position"] = UDim2.new(0.5, 0, 0.65, 0);
-	G2L["5"]["BorderColor3"] = Color3.fromRGB(0, 0, 0);
-	G2L["5"]["Name"] = [[LoadingBar]];
-	G2L["5"]["BackgroundTransparency"] = 1;
-
-	-- Progress bar fill indicator
-	G2L["6"] = Instance.new("Frame", G2L["5"]);
-	G2L["6"]["BorderSizePixel"] = 0;
-	G2L["6"]["BackgroundColor3"] = Color3.fromRGB(0, 0, 255);
-	G2L["6"]["Size"] = UDim2.new(0, 0, 1, 0);
-	G2L["6"]["BorderColor3"] = Color3.fromRGB(0, 0, 0);
-	G2L["6"]["Name"] = [[Progress]];
-	G2L["6"]["BackgroundTransparency"] = 0;
-
-	-- Status text display
-	G2L["7"] = Instance.new("TextLabel", G2L["2"]);
-	G2L["7"]["TextWrapped"] = true;
-	G2L["7"]["BorderSizePixel"] = 0;
-	G2L["7"]["TextSize"] = 14;
-	G2L["7"]["TextTransparency"] = 1;
-	G2L["7"]["TextScaled"] = true;
-	G2L["7"]["BackgroundColor3"] = Color3.fromRGB(255, 255, 255);
-	G2L["7"]["FontFace"] = Font.new([[rbxasset://fonts/families/SourceSansPro.json]], Enum.FontWeight.Bold, Enum.FontStyle.Normal);
-	G2L["7"]["TextColor3"] = Color3.fromRGB(255, 255, 255);
-	G2L["7"]["BackgroundTransparency"] = 1;
-	G2L["7"]["AnchorPoint"] = Vector2.new(0.5, 0.5);
-	G2L["7"]["Size"] = UDim2.new(0.75, 0, 0.1, 0);
-	G2L["7"]["BorderColor3"] = Color3.fromRGB(0, 0, 0);
-	G2L["7"]["Text"] = [[Loading]];
-	G2L["7"]["Name"] = [[DisplayText]];
-	G2L["7"]["Position"] = UDim2.new(0.5, 0, 0.55, 0);
-
-	-- Animate GUI elements into view with error handling
-	pcall(function() tween(G2L["2"], {BackgroundTransparency = 0}) end)
-	pcall(function() tween(G2L["4"], {ImageTransparency = 0}) end)
-	pcall(function() tween(G2L["7"], {TextTransparency = 0}) end)
-	pcall(function() tween(G2L["5"], {BackgroundTransparency = 0}) end)
-
-	-- Update progress display with error handling
-	local function updateProg(display, howmuch)
-		if not G2L["7"] or not G2L["7"].Parent then
-			warn("DisplayText element no longer exists")
-			return
-		end
-
-		pcall(function()
-			G2L["7"].Text = tostring(display or "Processing...")
-		end)
-
-		if G2L["6"] and G2L["6"].Parent then
-			pcall(function()
-				tween(G2L["6"], {Size = UDim2.new(math.clamp(howmuch or 0, 0, 1), 0, 1, 0)})
+			spinConnection = RunService.Heartbeat:Connect(function()
+				pcall(function()
+					local args = {currentSpinOption}
+					spinService:FireServer(unpack(args))
+				end)
+				wait(0.1)
 			end)
 		end
+	end,
+})
 
-		task.wait(0.5)
-	end
-
-	-- Execute optimization processes with comprehensive error handling
-	for i, v in ipairs(processes) do
-		if not v or not v.func then
-			warn("Invalid process at index " .. i)
-			continue
-		end
-
-		local processSuccess, processError = pcall(function()
-			updateProg(v.name, i/#processes)
-
-			if v.args then
-				v.func(v.args:GetDescendants(), true)
-			else
-				v.func()
+local AutoRebirthToggle = Tab:CreateToggle({
+	Name = "Auto Rebirth",
+	CurrentValue = false,
+	Flag = "AutoRebirthToggle",
+	Callback = function(Value)
+		autoRebirthEnabled = Value
+		if autoRebirthEnabled then
+			if rebirthConnection then
+				rebirthConnection:Disconnect()
 			end
-		end)
-
-		if not processSuccess then
-			warn("Process '" .. tostring(v.name) .. "' failed: " .. tostring(processError))
-		end
-	end
-
-	-- Set up real-time optimization for new objects with error handling
-	local workspaceConnection, lightingConnection
-
-	pcall(function()
-		workspaceConnection = game.Workspace.DescendantAdded:Connect(function(obj)
-			progress({{obj}}, false)
-		end)
-	end)
-
-	pcall(function()
-		lightingConnection = game.Lighting.DescendantAdded:Connect(function(obj)
-			progress({{obj}}, false)
-		end)
-	end)
-
-	-- Update completion status with error handling
-	pcall(function()
-		if G2L["7"] and G2L["7"].Parent then
-			G2L["7"].Text = "Completed"
-		end
-	end)
-
-	pcall(function() tween(G2L["6"], {BackgroundColor3 = Color3.fromRGB(0, 255, 102)}) end)
-	pcall(function() tween(G2L["7"], {TextColor3 = Color3.fromRGB(0, 255, 102)}) end)
-	task.wait(0.5)
-
-	-- Fade out GUI elements with error handling
-	pcall(function() tween(G2L["2"], {BackgroundTransparency = 1}) end)
-	pcall(function() tween(G2L["4"], {ImageTransparency = 1}) end)
-	pcall(function() tween(G2L["7"], {TextTransparency = 1}) end)
-	pcall(function() tween(G2L["5"], {BackgroundTransparency = 1}) end)
-	pcall(function() tween(G2L["6"], {BackgroundTransparency = 1}) end)
-end
-
--- Character management functions with error handling
-
--- Add a character model to the whitelist for protection
-local function addCharacter(char: Model)
-	if not char then
-		warn("Attempted to add nil character to whitelist")
-		return
-	end
-
-	local success, result = pcall(function()
-		if char and char:IsA("Model") and char.Parent then
-			table.insert(whitelist, char)
-			return true
-		end
-		return false
-	end)
-
-	if not success then
-		warn("Failed to add character to whitelist: " .. tostring(result))
-	end
-end
-
--- Remove a character model from the whitelist
-local function removeCharacter(char: Model)
-	if not char then
-		return -- Silently handle nil character removal
-	end
-
-	pcall(function()
-		for i, v in ipairs(whitelist) do
-			if v == char then
-				table.remove(whitelist, i)
-				break
-			end
-		end
-	end)
-end
-
--- Set up character tracking for any player with error handling
-local function trackPlayer(plr: Player)
-	if not plr or not plr.Parent then
-		warn("Attempted to track invalid player")
-		return
-	end
-
-	-- Add current character if it exists (fixes issue with players already in game)
-	pcall(function()
-		if plr.Character and plr.Character.Parent then
-			addCharacter(plr.Character)
-		end
-	end)
-
-	-- Listen for character spawns and removals with error handling
-	pcall(function()
-		plr.CharacterAdded:Connect(function(char)
-			addCharacter(char)
-		end)
-	end)
-
-	pcall(function()
-		plr.CharacterRemoving:Connect(function(char)
-			removeCharacter(char)
-		end)
-	end)
-end
-
--- Initialize player tracking with error handling
-pcall(function()
-	-- Track all existing players
-	for _, plr in ipairs(Players:GetPlayers()) do
-		trackPlayer(plr)
-	end
-end)
-
--- Listen for new players joining with error handling
-pcall(function()
-	Players.PlayerAdded:Connect(function(plr)
-		trackPlayer(plr)
-	end)
-end)
-
--- Handle players leaving with error handling
-pcall(function()
-	Players.PlayerRemoving:Connect(function(plr)
-		pcall(function()
-			if plr.Character then
-				removeCharacter(plr.Character)
-			end
-		end)
-	end)
-end)
-
-task.wait(2)
--- Initialize optimization when LocalPlayer spawns with enhanced error handling
-if LocalPlayer then
-	-- Handle if LocalPlayer already has a character when script runs
-	pcall(function()
-		if LocalPlayer.Character and LocalPlayer.Character.Parent then
-			addCharacter(LocalPlayer.Character)
-			task.wait(2)
-				if hasINIT then 
-					return 
-				end
-			init() -- Start optimization immediately if character already exists
-		end
-	end)
-
-	pcall(function()
-		LocalPlayer.CharacterAdded:Connect(function(char)
-			local success, result = pcall(function()
-				addCharacter(char)
-				task.wait(2)
-				if hasINIT then 
-					return 
-				end
-				init() -- Start optimization process after LocalPlayer spawns
+			rebirthConnection = RunService.Heartbeat:Connect(function()
+				pcall(function()
+					rebirthService:FireServer()
+				end)
+				wait(1)
 			end)
+		else
+			if rebirthConnection then
+				rebirthConnection:Disconnect()
+				rebirthConnection = nil
+			end
+		end
+	end,
+})
 
-			if not success then
-				warn("Failed during LocalPlayer character initialization: " .. tostring(result))
+local runningLoops = {}
+
+local function handleSelection(upgradeName, option, upgradeObject)
+	if runningLoops[upgradeName] then
+		runningLoops[upgradeName] = false
+		wait(0.1)
+	end
+
+	if option == "Heads" then
+		runningLoops[upgradeName] = true
+		spawn(function()
+			while runningLoops[upgradeName] do
+				firetouchinterest(game.Players.LocalPlayer.Character.HumanoidRootPart, upgradeObject.UpgradeModel.Buttons.Heads.Button, 0)
+				firetouchinterest(game.Players.LocalPlayer.Character.HumanoidRootPart, upgradeObject.UpgradeModel.Buttons.Heads.Button, 1)
+				wait(0.1)
 			end
 		end)
-	end)
-
-	pcall(function()
-		LocalPlayer.CharacterRemoving:Connect(function(char)
-			removeCharacter(char)
+	elseif option == "Tails" then
+		runningLoops[upgradeName] = true
+		spawn(function()
+			while runningLoops[upgradeName] do
+				firetouchinterest(game.Players.LocalPlayer.Character.HumanoidRootPart, upgradeObject.UpgradeModel.Buttons.Tails.Button, 0)
+				firetouchinterest(game.Players.LocalPlayer.Character.HumanoidRootPart, upgradeObject.UpgradeModel.Buttons.Tails.Button, 1)
+				wait(0.1)
+			end
 		end)
-	end)
-else
-	warn("LocalPlayer is not available - script may not function properly")
+	end
+end
+
+for i, v in pairs(workspace.Map.Upgrades:GetChildren()) do
+	if v:FindFirstChild("UpgradeModel") and 
+		v.UpgradeModel:FindFirstChild("Buttons") and
+		v.UpgradeModel.Buttons:FindFirstChild("Heads") and
+		v.UpgradeModel.Buttons:FindFirstChild("Tails") then
+
+		local Dropdown = Tab:CreateDropdown({
+			Name = v.Name,
+			Options = {"None","Heads", "Tails"},
+			CurrentOption = {"None"},
+			MultipleOptions = false,
+			Flag = "Dropdown" .. i,
+			Callback = function(Options)
+				handleSelection(v.Name, Options[1], v)
+			end,
+		})
+		runningLoops[v.Name] = false
+	end
 end
