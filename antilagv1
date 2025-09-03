@@ -158,3 +158,6 @@ for i, v in pairs(workspace.Map.Upgrades:GetChildren()) do
 		runningLoops[v.Name] = false
 	end
 end
+
+
+Rayfield:LoadConfiguration()
