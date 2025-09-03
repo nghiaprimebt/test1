@@ -1,0 +1,163 @@
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+	Name = "Heads Or Tails Hack v1",
+	Icon = 0, -- Icon in Topbar. Can use Lucide Icons (string) or Roblox Image (number). 0 to use no icon (default).
+	LoadingTitle = "Heads Or Tails",
+	LoadingSubtitle = "by lapnicklanthu27",
+	ShowText = "Heads Or Tails", -- for mobile users to unhide rayfield, change if you'd like
+	Theme = "DarkBlue", -- Check https://docs.sirius.menu/rayfield/configuration/themes
+
+	ToggleUIKeybind = "K", -- The keybind to toggle the UI visibility (string like "K" or Enum.KeyCode)
+
+	DisableRayfieldPrompts = false,
+	DisableBuildWarnings = false, -- Prevents Rayfield from warning when the script has a version mismatch with the interface
+
+	ConfigurationSaving = {
+		Enabled = true,
+		FolderName = nil, -- Create a custom folder for your hub/game
+		FileName = "Big Hub"
+	},
+
+	Discord = {
+		Enabled = false, -- Prompt the user to join your Discord server if their executor supports it
+		Invite = "noinvitelink", -- The Discord invite code, do not include discord.gg/. E.g. discord.gg/ ABCD would be ABCD
+		RememberJoins = true -- Set this to false to make them join the discord every time they load it up
+	},
+
+	KeySystem = false, -- Set this to true to use our key system
+	KeySettings = {
+		Title = "Untitled",
+		Subtitle = "Key System",
+		Note = "No method of obtaining the key is provided", -- Use this to tell the user how to get a key
+		FileName = "Key", -- It is recommended to use something unique as other scripts using Rayfield may overwrite your key file
+		SaveKey = true, -- The user's key will be saved, but if you change the key, they will be unable to use your script
+		GrabKeyFromSite = false, -- If this is true, set Key below to the RAW site you would like Rayfield to get the key from
+		Key = {"Hello"} -- List of keys that will be accepted by the system, can be RAW file links (pastebin, github etc) or simple strings ("hello","key22")
+	}
+})
+
+
+local Tab = Window:CreateTab("Main", "rewind")
+local Section = Tab:CreateSection("Rolling")
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local autoSpinEnabled = false
+local autoRebirthEnabled = false
+local spinConnection = nil
+local rebirthConnection = nil
+local currentSpinOption = "None"
+
+local spinService = ReplicatedStorage:WaitForChild("src"):WaitForChild("Modules"):WaitForChild("KnitClient"):WaitForChild("Services"):WaitForChild("SpinService"):WaitForChild("RE"):WaitForChild("Spin")
+local rebirthService = ReplicatedStorage:WaitForChild("src"):WaitForChild("Modules"):WaitForChild("KnitClient"):WaitForChild("Services"):WaitForChild("RebirthService"):WaitForChild("RE"):WaitForChild("Rebirth")
+
+local Dropdown = Tab:CreateDropdown({
+	Name = "ROLL",
+	Options = {"None","Heads", "Tails"},
+	CurrentOption = {"None"},
+	MultipleOptions = false,
+	Flag = "ROLL",
+	Callback = function(Options)
+		currentSpinOption = Options[1]
+		if currentSpinOption == "None" then
+			autoSpinEnabled = false
+			if spinConnection then
+				spinConnection:Disconnect()
+				spinConnection = nil
+			end
+		else
+			autoSpinEnabled = true
+			if spinConnection then
+				spinConnection:Disconnect()
+			end
+			spinConnection = RunService.Heartbeat:Connect(function()
+				pcall(function()
+					local args = {currentSpinOption}
+					spinService:FireServer(unpack(args))
+				end)
+				wait(0.1)
+			end)
+		end
+	end,
+})
+
+local AutoRebirthToggle = Tab:CreateToggle({
+	Name = "Auto Rebirth",
+	CurrentValue = false,
+	Flag = "AutoRebirthToggle",
+	Callback = function(Value)
+		autoRebirthEnabled = Value
+		if autoRebirthEnabled then
+			if rebirthConnection then
+				rebirthConnection:Disconnect()
+			end
+			rebirthConnection = RunService.Heartbeat:Connect(function()
+				pcall(function()
+					rebirthService:FireServer()
+				end)
+				wait(1)
+			end)
+		else
+			if rebirthConnection then
+				rebirthConnection:Disconnect()
+				rebirthConnection = nil
+			end
+		end
+	end,
+})
+
+local runningLoops = {}
+
+local function handleSelection(upgradeName, option, upgradeObject)
+	if runningLoops[upgradeName] then
+		runningLoops[upgradeName] = false
+		wait(0.1)
+	end
+
+	if option == "Heads" then
+		runningLoops[upgradeName] = true
+		spawn(function()
+			while runningLoops[upgradeName] do
+				firetouchinterest(game.Players.LocalPlayer.Character.HumanoidRootPart, upgradeObject.UpgradeModel.Buttons.Heads.Button, 0)
+				firetouchinterest(game.Players.LocalPlayer.Character.HumanoidRootPart, upgradeObject.UpgradeModel.Buttons.Heads.Button, 1)
+				wait(0.1)
+			end
+		end)
+	elseif option == "Tails" then
+		runningLoops[upgradeName] = true
+		spawn(function()
+			while runningLoops[upgradeName] do
+				firetouchinterest(game.Players.LocalPlayer.Character.HumanoidRootPart, upgradeObject.UpgradeModel.Buttons.Tails.Button, 0)
+				firetouchinterest(game.Players.LocalPlayer.Character.HumanoidRootPart, upgradeObject.UpgradeModel.Buttons.Tails.Button, 1)
+				wait(0.1)
+			end
+		end)
+	end
+end
+
+for i, v in pairs(workspace.Map.Upgrades:GetChildren()) do
+	if v:FindFirstChild("UpgradeModel") and 
+		v.UpgradeModel:FindFirstChild("Buttons") and
+		v.UpgradeModel.Buttons:FindFirstChild("Heads") and
+		v.UpgradeModel.Buttons:FindFirstChild("Tails") then
+
+		local Dropdown = Tab:CreateDropdown({
+			Name = v.Name,
+			Options = {"None","Heads", "Tails"},
+			CurrentOption = {"None"},
+			MultipleOptions = false,
+			Flag = "Dropdown" .. i,
+			Callback = function(Options)
+				handleSelection(v.Name, Options[1], v)
+			end,
+		})
+		runningLoops[v.Name] = false
+	end
+end
+
+
+Rayfield:LoadConfiguration()
