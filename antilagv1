@@ -1,12 +1,12 @@
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Window = Rayfield:CreateWindow({
-	Name = "Hack Vox Sea v 1.0",
+	Name = "Heads Or Tails Hack v1",
 	Icon = 0, -- Icon in Topbar. Can use Lucide Icons (string) or Roblox Image (number). 0 to use no icon (default).
-	LoadingTitle = "Vox Sea",
-	LoadingSubtitle = "by no one",
-	ShowText = "Vox Sea", -- for mobile users to unhide rayfield, change if you'd like
-	Theme = "Light", -- Check https://docs.sirius.menu/rayfield/configuration/themes
+	LoadingTitle = "Heads Or Tails",
+	LoadingSubtitle = "by lapnicklanthu27",
+	ShowText = "Heads Or Tails", -- for mobile users to unhide rayfield, change if you'd like
+	Theme = "DarkBlue", -- Check https://docs.sirius.menu/rayfield/configuration/themes
 
 	ToggleUIKeybind = "K", -- The keybind to toggle the UI visibility (string like "K" or Enum.KeyCode)
 
